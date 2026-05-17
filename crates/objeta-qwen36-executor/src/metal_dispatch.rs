@@ -24,6 +24,38 @@ extern "C" {
         x: *const f32, k: u64,
         y: *mut f32, m: u64,
     ) -> i32;
+    // Fused GQA
+    fn metal_gqa_init(
+        gpu: MetalGpu,
+        rope_cos: *const f32, rope_sin: *const f32, max_seq: u32,
+    ) -> i32;
+    fn metal_gqa_load_weights(
+        gpu: MetalGpu,
+        w_qkv: *const u16, w_qkv_bytes: u64,
+        w_o: *const u16, w_o_bytes: u64,
+    ) -> i32;
+    fn metal_fused_gqa(
+        gpu: MetalGpu,
+        h: *const f32, pos: u32, seq_len: u32, max_seq: u32,
+        k_cache: *mut f32, v_cache: *mut f32, kv_bytes: u64,
+        attn_out: *mut f32,
+    ) -> i32;
+    fn metal_gqa_oproj(
+        gpu: MetalGpu,
+        w_o: *const u16, w_o_bytes: u64,
+        attn_out: *const f32,
+        output: *mut f32, m: u32, k: u32,
+    ) -> i32;
+    fn metal_multi_expert_gemv(
+        gpu: MetalGpu,
+        all_q4: *const u8, q4_len: u64,
+        expert_offsets: *const u32, n_offsets: u64,
+        x: *const f32, k: u64,
+        y: *mut f32,
+        output_offsets: *const u32,
+        n_experts: u32,
+        total_output_elems: u64,
+    ) -> i32;
 }
 
 pub struct MetalExpertGpu {
@@ -65,6 +97,86 @@ impl MetalExpertGpu {
         }
         y
     }
+
+    pub fn dispatch_multi_expert(
+        &self,
+        all_q4: &[u8],
+        expert_offsets: &[u32],
+        x: &[f32],
+        output_offsets: &[u32],
+        n_experts: u32,
+        total_elems: usize,
+    ) -> Vec<f32> {
+        let mut y = vec![0.0f32; total_elems];
+        unsafe {
+            metal_multi_expert_gemv(
+                self.handle,
+                all_q4.as_ptr(), all_q4.len() as u64,
+                expert_offsets.as_ptr(), expert_offsets.len() as u64,
+                x.as_ptr(), x.len() as u64,
+                y.as_mut_ptr(),
+                output_offsets.as_ptr(),
+                n_experts,
+                total_elems as u64,
+            );
+        }
+        y
+    }
+
+    // ── Fused GQA ──────────────────────────────────────────────────────
+
+    /// Initialize GQA persistent resources (RoPE tables). Call once.
+    pub fn gqa_init(&self, rope_cos: &[f32], rope_sin: &[f32], max_seq: u32) -> i32 {
+        unsafe { metal_gqa_init(self.handle, rope_cos.as_ptr(), rope_sin.as_ptr(), max_seq) }
+    }
+
+    /// Load per-layer GQA weights into persistent Metal buffers. Call before each GQA layer.
+    pub fn gqa_load_weights(&self, w_qkv: &[u16], w_o: &[u16]) -> i32 {
+        unsafe {
+            metal_gqa_load_weights(
+                self.handle,
+                w_qkv.as_ptr(), (w_qkv.len() * 2) as u64,
+                w_o.as_ptr(), (w_o.len() * 2) as u64,
+            )
+        }
+    }
+
+    /// Dispatch fused GQA: QKV + RoPE + online softmax + V sum + Q-gate.
+    /// Returns attn_out (4096 f32).
+    pub fn dispatch_fused_gqa(
+        &self,
+        h: &[f32], pos: u32, seq_len: u32, max_seq: u32,
+        k_cache: &mut [f32], v_cache: &mut [f32],
+    ) -> Vec<f32> {
+        let mut attn_out = vec![0.0f32; 4096];
+        unsafe {
+            metal_fused_gqa(
+                self.handle,
+                h.as_ptr(), pos, seq_len, max_seq,
+                k_cache.as_mut_ptr(), v_cache.as_mut_ptr(), (k_cache.len() * 4) as u64,
+                attn_out.as_mut_ptr(),
+            );
+        }
+        attn_out
+    }
+
+    /// Dispatch GQA O-proj: output = W_o @ attn_out.
+    /// W_o is (m, k) = (2048, 4096) f16. attn_out is (4096,) f32.
+    pub fn dispatch_gqa_oproj(
+        &self,
+        w_o: &[u16], attn_out: &[f32], m: u32, k: u32,
+    ) -> Vec<f32> {
+        let mut output = vec![0.0f32; m as usize];
+        unsafe {
+            metal_gqa_oproj(
+                self.handle,
+                w_o.as_ptr(), (w_o.len() * 2) as u64,
+                attn_out.as_ptr(),
+                output.as_mut_ptr(), m, k,
+            );
+        }
+        output
+    }
 }
 
 impl Drop for MetalExpertGpu {
@@ -92,6 +204,14 @@ pub extern "C" fn lko_metal_init(metallib_path: *const i8) -> i32 {
     }
 }
 
+// Convenience: access the global GPU instance.
+pub fn with_gpu<F, R>(f: F) -> Option<R>
+where F: FnOnce(&MetalExpertGpu) -> R
+{
+    let guard = METAL_GPU.lock().unwrap();
+    guard.as_ref().map(f)
+}
+
 #[no_mangle]
 pub extern "C" fn lko_metal_expert_gemv(
     q4_data: *const u8, q4_len: i32,
@@ -109,73 +229,6 @@ pub extern "C" fn lko_metal_expert_gemv(
     let result = gpu.dispatch_expert(q4, inp, m as usize, k as usize, num_blocks as usize);
     unsafe { std::ptr::copy_nonoverlapping(result.as_ptr(), y, m as usize); }
     m
-}
-
-extern "C" {
-    fn metal_multi_expert_gemv(
-        gpu: MetalGpu,
-        all_q4: *const u8, q4_len: u64,
-        expert_offsets: *const u32, n_offsets: u64,
-        x: *const f32, k: u64,
-        y: *mut f32,
-        output_offsets: *const u32,
-        n_experts: u32,
-        total_output_elems: u64,
-    ) -> i32;
-    fn metal_fused_gqa(
-        gpu: MetalGpu,
-        w_qkv: *const f32, w_qkv_bytes: u64,
-        h: *const f32, rope_cos: *const f32, rope_sin: *const f32,
-        pos: u32, seq_len: u32, max_seq: u32,
-        k_cache: *mut f32, v_cache: *mut f32, kv_bytes: u64,
-        attn_out: *mut f32,
-    ) -> i32;
-}
-
-impl MetalExpertGpu {
-    pub fn dispatch_multi_expert(
-        &self,
-        all_q4: &[u8],
-        expert_offsets: &[u32],  // [M, K, n_blocks, q4_off] × n_experts
-        x: &[f32],
-        output_offsets: &[u32],  // per-expert output start
-        n_experts: u32,
-        total_elems: usize,
-    ) -> Vec<f32> {
-        let mut y = vec![0.0f32; total_elems];
-        unsafe {
-            metal_multi_expert_gemv(
-                self.handle,
-                all_q4.as_ptr(), all_q4.len() as u64,
-                expert_offsets.as_ptr(), expert_offsets.len() as u64,
-                x.as_ptr(), x.len() as u64,
-                y.as_mut_ptr(),
-                output_offsets.as_ptr(),
-                n_experts,
-                total_elems as u64,
-            );
-        }
-        y
-    }
-
-    pub fn dispatch_fused_gqa(&self,
-        w_qkv: &[f32], h: &[f32],
-        rope_cos: &[f32], rope_sin: &[f32],
-        pos: u32, seq_len: u32, max_seq: u32,
-        k_cache: &mut [f32], v_cache: &mut [f32],
-    ) -> Vec<f32> {
-        let mut attn_out = vec![0.0f32; 4096];
-        unsafe {
-            metal_fused_gqa(self.handle,
-                w_qkv.as_ptr(), (w_qkv.len() * 4) as u64,
-                h.as_ptr(), rope_cos.as_ptr(), rope_sin.as_ptr(),
-                pos, seq_len, max_seq,
-                k_cache.as_mut_ptr(), v_cache.as_mut_ptr(), (k_cache.len() * 4) as u64,
-                attn_out.as_mut_ptr(),
-            );
-        }
-        attn_out
-    }
 }
 
 #[no_mangle]
@@ -198,11 +251,40 @@ pub extern "C" fn lko_metal_fp16_gemv(
     m
 }
 
+// ── Fused GQA C API ──────────────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "C" fn lko_metal_gqa_init(
+    rope_cos: *const f32, rope_sin: *const f32, max_seq: i32,
+) -> i32 {
+    let gpu_guard = METAL_GPU.lock().unwrap();
+    let gpu = match gpu_guard.as_ref() {
+        Some(g) => g,
+        None => return -1,
+    };
+    let cos = unsafe { std::slice::from_raw_parts(rope_cos, (max_seq * 128) as usize) };
+    let sin = unsafe { std::slice::from_raw_parts(rope_sin, (max_seq * 128) as usize) };
+    gpu.gqa_init(cos, sin, max_seq as u32)
+}
+
+#[no_mangle]
+pub extern "C" fn lko_metal_gqa_load_weights(
+    w_qkv: *const u16, w_qkv_bytes: i32,
+    w_o: *const u16, w_o_bytes: i32,
+) -> i32 {
+    let gpu_guard = METAL_GPU.lock().unwrap();
+    let gpu = match gpu_guard.as_ref() {
+        Some(g) => g,
+        None => return -1,
+    };
+    let qkv = unsafe { std::slice::from_raw_parts(w_qkv, (w_qkv_bytes / 2) as usize) };
+    let o = unsafe { std::slice::from_raw_parts(w_o, (w_o_bytes / 2) as usize) };
+    gpu.gqa_load_weights(qkv, o)
+}
+
 #[no_mangle]
 pub extern "C" fn lko_metal_fused_gqa(
-    w_qkv: *const f32, w_qkv_bytes: i32,
     h: *const f32,
-    rope_cos: *const f32, rope_sin: *const f32,
     pos: i32, seq_len: i32, max_seq: i32,
     k_cache: *mut f32, v_cache: *mut f32, kv_bytes: i32,
     attn_out: *mut f32,
@@ -212,20 +294,30 @@ pub extern "C" fn lko_metal_fused_gqa(
         Some(g) => g,
         None => return -1,
     };
-    let w = unsafe { std::slice::from_raw_parts(w_qkv, (w_qkv_bytes/4) as usize) };
     let h_slice = unsafe { std::slice::from_raw_parts(h, 2048) };
-    let cos = unsafe { std::slice::from_raw_parts(rope_cos, (max_seq * 128) as usize) };
-    let sin = unsafe { std::slice::from_raw_parts(rope_sin, (max_seq * 128) as usize) };
-    let kc = unsafe { std::slice::from_raw_parts_mut(k_cache, (kv_bytes/4) as usize) };
-    let vc = unsafe { std::slice::from_raw_parts_mut(v_cache, (kv_bytes/4) as usize) };
-
-    let result = gpu.dispatch_fused_gqa(
-        w, h_slice, cos, sin,
-        pos as u32, seq_len as u32, max_seq as u32,
-        kc, vc,
-    );
+    let kc = unsafe { std::slice::from_raw_parts_mut(k_cache, (kv_bytes / 4) as usize) };
+    let vc = unsafe { std::slice::from_raw_parts_mut(v_cache, (kv_bytes / 4) as usize) };
+    let result = gpu.dispatch_fused_gqa(h_slice, pos as u32, seq_len as u32, max_seq as u32, kc, vc);
     unsafe { std::ptr::copy_nonoverlapping(result.as_ptr(), attn_out, 4096); }
     4096
+}
+
+#[no_mangle]
+pub extern "C" fn lko_metal_gqa_oproj(
+    w_o: *const u16, w_o_bytes: i32,
+    attn_out: *const f32,
+    output: *mut f32, m: i32, k: i32,
+) -> i32 {
+    let gpu_guard = METAL_GPU.lock().unwrap();
+    let gpu = match gpu_guard.as_ref() {
+        Some(g) => g,
+        None => return -1,
+    };
+    let wo = unsafe { std::slice::from_raw_parts(w_o, (w_o_bytes / 2) as usize) };
+    let attn = unsafe { std::slice::from_raw_parts(attn_out, k as usize) };
+    let result = gpu.dispatch_gqa_oproj(wo, attn, m as u32, k as u32);
+    unsafe { std::ptr::copy_nonoverlapping(result.as_ptr(), output, m as usize); }
+    m
 }
 
 #[no_mangle]

@@ -33,6 +33,12 @@ lib.lko_runner_set_fusion_ratio(FUSION_RATIO)
 lib.lko_runner_set_moe_on_deltanet(MOE_ON_DELTANET)
 print(f"Strategy: ΔN={FUSION_RATIO:.0%} ({int(30*FUSION_RATIO)}/30 layers), MoE on ΔN={'yes' if MOE_ON_DELTANET else 'no'}")
 
+# Warmup: touch q4 pages to bring them into OS page cache
+lib.lko_runner_warmup.argtypes = [ctypes.c_int32]
+lib.lko_runner_warmup.restype = ctypes.c_int32
+print("Warming OS page cache...")
+lib.lko_runner_warmup(100)
+
 # C API: single step = forward + RMSNorm + lm_head + top-k
 lib.lko_runner_step.argtypes = [
     ctypes.c_int32, ctypes.c_int32, ctypes.c_int32,  # token_id, pos, seq_len

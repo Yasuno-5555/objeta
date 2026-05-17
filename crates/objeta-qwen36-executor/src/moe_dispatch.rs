@@ -180,8 +180,8 @@ mod tests {
 
 // ── Router ──────────────────────────────────────────────────────────
 
-/// Top-k expert selection via argpartition.
-fn router_topk(router_w: &[f32], x: &[f32], k: usize) -> (Vec<usize>, Vec<f32>) {
+/// Top-k expert selection via argpartition. Public for Metal dispatch use.
+pub fn router_topk_cpu(router_w: &[f32], x: &[f32], k: usize) -> (Vec<usize>, Vec<f32>) {
     // Compute logits
     let mut logits: Vec<(f32, usize)> = router_w
         .chunks(HIDDEN_DIM)
@@ -207,6 +207,45 @@ fn router_topk(router_w: &[f32], x: &[f32], k: usize) -> (Vec<usize>, Vec<f32>) 
 }
 
 
+/// Adaptive top-k: threshold based on router entropy.
+/// Peaked distribution → aggressive pruning (2-4 experts).
+/// Flat distribution → conservative (6-8 experts).
+/// Returns (indices, renormalized_weights, n_selected).
+pub fn router_topk_adaptive(
+    router_w: &[f32], x: &[f32], max_k: usize,
+) -> (Vec<usize>, Vec<f32>, usize) {
+    let (indices, weights) = router_topk_cpu(router_w, x, max_k);
+
+    // Compute entropy of top-k weights to gauge distribution peakedness
+    let entropy: f32 = -weights.iter()
+        .map(|&w| if w > 1e-10 { w * w.ln() } else { 0.0 })
+        .sum::<f32>();
+
+    // Adaptive threshold: lower entropy → more peaked → aggressive pruning
+    // max entropy for k=8 uniform = ln(8) ≈ 2.08
+    let cum_threshold = if entropy < 1.0 {
+        0.45  // peaked: 2-3 experts
+    } else if entropy < 1.5 {
+        0.60  // moderate: 4-5 experts
+    } else if entropy < 2.0 {
+        0.78  // somewhat flat: 6 experts
+    } else {
+        0.88  // near-uniform: 7 experts (vs 8)
+    };
+
+    let mut cum = 0.0f32;
+    let mut n = 0usize;
+    for (i, &w) in weights.iter().enumerate() {
+        cum += w;
+        n = i + 1;
+        if cum >= cum_threshold && n >= 2 { break; }
+    }
+    let mut truncated_weights: Vec<f32> = weights[..n].to_vec();
+    let sum: f32 = truncated_weights.iter().sum();
+    for w in &mut truncated_weights { *w /= sum.max(1e-12); }
+    (indices[..n].to_vec(), truncated_weights, n)
+}
+
 // ── MoE Forward ─────────────────────────────────────────────────────
 
 fn silu(x: f32) -> f32 { x / (1.0 + (-x).exp()) }
@@ -220,7 +259,7 @@ fn moe_forward_layer(
     track_layer: Option<usize>, // if Some, record routing to global freq tracker
 ) -> (Vec<f32>, Vec<usize>, Vec<f32>) {
     // 1. Router
-    let (expert_ids, routing_weights) = router_topk(router_w, x, TOP_K);
+    let (expert_ids, routing_weights) = router_topk_cpu(router_w, x, TOP_K);
 
     // Track frequency
     if let Some(layer_idx) = track_layer {
@@ -234,12 +273,13 @@ fn moe_forward_layer(
         }
     }
 
-    // Check cache for this layer (clone data to avoid lifetime issues with rayon)
+    // Check per-layer cache for pre-dequantized expert weights
     let cache: Vec<(usize, Vec<f32>, Vec<f32>, Vec<f32>)> = {
-        let guard = CACHED_LAYER.lock().unwrap();
-        if let Some((cached_layer, ref cached_experts)) = *guard {
-            if cached_layer == track_layer.unwrap_or(usize::MAX) {
-                cached_experts.iter()
+        let track = track_layer.unwrap_or(usize::MAX);
+        let caches = unsafe { CACHED_EXPERTS.as_ref() };
+        if let Some(caches) = caches {
+            if track < caches.len() {
+                caches[track].lock().unwrap().iter()
                     .map(|(eid, g, u, d)| (*eid, g.clone(), u.clone(), d.clone()))
                     .collect()
             } else { Vec::new() }
@@ -439,10 +479,128 @@ fn q4k_dequantize_only(q4_data: &[u8], M: usize, K: usize) -> Vec<f32> {
 
 use std::sync::Mutex;
 
-static CACHED_LAYER: Mutex<Option<(usize, Vec<(usize, Vec<f32>, Vec<f32>, Vec<f32>)>)>> = Mutex::new(None);
+/// Per-layer expert caches: CACHED_EXPERTS[layer] = vec of (eid, gate, up, down) f32
+pub(crate) static mut CACHED_EXPERTS: Option<Vec<Mutex<Vec<(usize, Vec<f32>, Vec<f32>, Vec<f32>)>>>> = None;
 
-/// Set pre-dequantized expert cache for a layer.
-/// expert_data: flat array of [gate_f32, up_f32, down_f32] per expert, each 512*2048 or 2048*512
+/// Record routing decisions for frequency tracking (warmup).
+pub(crate) fn record_routing(layer_idx: usize, expert_ids: &[usize]) {
+    let trackers = unsafe { GLOBAL_FREQ.as_ref() };
+    if let Some(trackers) = trackers {
+        if layer_idx < trackers.len() {
+            let mut freq = trackers[layer_idx].write().unwrap();
+            for &eid in expert_ids {
+                *freq.entry(eid).or_insert(0) += 1;
+            }
+        }
+    }
+}
+
+/// Compute expert output directly from cached f32 weights (clone + GEMV outside lock).
+/// Returns MoE output contribution (2048 f32) scaled by routing weight, or None if not cached.
+pub(crate) fn compute_cached_expert(layer_idx: usize, eid: usize, x: &[f32], rw: f32) -> Option<Vec<f32>> {
+    use crate::qwen36_forward::dot_f32;
+    let caches = unsafe { CACHED_EXPERTS.as_ref()? };
+    let cache = caches.get(layer_idx)?;
+    // Lock ONLY for lookup+clone (~0.2ms at 60GB/s), release before GEMV
+    let (gate, up, down) = {
+        let cache = cache.lock().unwrap();
+        cache.iter().find(|(id, _, _, _)| *id == eid)
+            .map(|(_, g, u, d)| (g.clone(), u.clone(), d.clone()))?
+    };
+
+    // gate GEMV: gate (512, 2048) @ x (2048) → (512) — parallel across rows
+    let gate_out: Vec<f32> = (0..FFN_DIM).into_par_iter().map(|row| {
+        let w = &gate[row * HIDDEN_DIM..(row + 1) * HIDDEN_DIM];
+        dot_f32(w, x)
+    }).collect();
+
+    // up GEMV: up (512, 2048) @ x (2048) → (512)
+    let up_out: Vec<f32> = (0..FFN_DIM).into_par_iter().map(|row| {
+        let w = &up[row * HIDDEN_DIM..(row + 1) * HIDDEN_DIM];
+        dot_f32(w, x)
+    }).collect();
+
+    // SwiGLU
+    let mut hidden = vec![0.0f32; FFN_DIM];
+    for i in 0..FFN_DIM {
+        let g = gate_out[i];
+        hidden[i] = g / (1.0 + (-g).exp()) * up_out[i];
+    }
+
+    // down GEMV: down (2048, 512) @ hidden (512) → (2048) — parallel across rows, NEON dot
+    let down_out: Vec<f32> = (0..HIDDEN_DIM).into_par_iter().map(|row| {
+        let w = &down[row * FFN_DIM..(row + 1) * FFN_DIM];
+        dot_f32(w, &hidden) * rw
+    }).collect();
+
+    Some(down_out)
+}
+
+/// Look up a cached expert from the per-layer cache. Returns (gate, up, down) if found.
+/// Prefer compute_cached_expert for inference to avoid cloning.
+pub(crate) fn get_cached_expert(layer_idx: usize, eid: usize) -> Option<(Vec<f32>, Vec<f32>, Vec<f32>)> {
+    let caches = unsafe { CACHED_EXPERTS.as_ref()? };
+    let cache = caches.get(layer_idx)?;
+    let cache = cache.lock().unwrap();
+    cache.iter().find(|(id, _, _, _)| *id == eid)
+        .map(|(_, g, u, d)| (g.clone(), u.clone(), d.clone()))
+}
+
+/// Initialize per-layer cache array for `n_layers`. Call once before inference.
+#[no_mangle]
+pub extern "C" fn lko_moe_init_caches(n_layers: i32) -> i32 {
+    let mut caches = Vec::with_capacity(n_layers as usize);
+    for _ in 0..n_layers {
+        caches.push(Mutex::new(Vec::new()));
+    }
+    unsafe { CACHED_EXPERTS = Some(caches); }
+    0
+}
+
+/// Build expert cache for a layer from frequency data + q4 weights.
+/// Pre-dequantizes top-N experts and stores in CACHED_EXPERTS[layer_idx].
+#[no_mangle]
+pub extern "C" fn lko_moe_build_cache(
+    layer_idx: i32,
+    gate_up_q4: *const u8, gate_up_q4_len: i32,
+    down_q4: *const u8, down_q4_len: i32,
+    cache_size: i32,
+) -> i32 {
+    let li = layer_idx as usize;
+    // Get top-N from frequency tracker
+    let top_ids = unsafe {
+        let trackers = GLOBAL_FREQ.as_ref();
+        if trackers.is_none() || li >= trackers.unwrap().len() { return 0; }
+        let freq = trackers.unwrap()[li].read().unwrap();
+        let mut entries: Vec<(usize, u32)> = freq.iter().map(|(k, v)| (*k, *v)).collect();
+        entries.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
+        entries.iter().take(cache_size as usize).map(|(k, _)| *k).collect::<Vec<usize>>()
+    };
+
+    if top_ids.is_empty() { return 0; }
+
+    let gu_q4 = unsafe { std::slice::from_raw_parts(gate_up_q4, gate_up_q4_len as usize) };
+    let d_q4 = unsafe { std::slice::from_raw_parts(down_q4, down_q4_len as usize) };
+
+    let mut cache_entries: Vec<(usize, Vec<f32>, Vec<f32>, Vec<f32>)> = Vec::with_capacity(top_ids.len());
+    for &eid in &top_ids {
+        let gu_start = eid * GU_EXPERT_BYTES;
+        let gu = q4k_dequantize_only(&gu_q4[gu_start..gu_start + GU_EXPERT_BYTES], GU_ROWS, GU_K);
+        let d_start = eid * D_EXPERT_BYTES;
+        let down = q4k_dequantize_only(&d_q4[d_start..d_start + D_EXPERT_BYTES], D_ROWS, D_K);
+        let gate = gu[..FFN_DIM * GU_K].to_vec();
+        let up = gu[FFN_DIM * GU_K..].to_vec();
+        cache_entries.push((eid, gate, up, down));
+    }
+
+    let caches = unsafe { CACHED_EXPERTS.as_ref().unwrap() };
+    if li < caches.len() {
+        *caches[li].lock().unwrap() = cache_entries;
+    }
+    top_ids.len() as i32
+}
+
+/// Set pre-dequantized expert cache for a layer (API-compatible with old lko_moe_set_cache).
 #[no_mangle]
 pub extern "C" fn lko_moe_set_cache(
     layer_idx: i32,
@@ -470,12 +628,22 @@ pub extern "C" fn lko_moe_set_cache(
             downs[start_d..start_d + HIDDEN_DIM * FFN_DIM].to_vec(),
         ));
     }
-    *CACHED_LAYER.lock().unwrap() = Some((layer_idx as usize, cache));
+    let caches = unsafe { CACHED_EXPERTS.as_ref() };
+    if let Some(caches) = caches {
+        if (layer_idx as usize) < caches.len() {
+            *caches[layer_idx as usize].lock().unwrap() = cache;
+        }
+    }
 }
 
 #[no_mangle]
 pub extern "C" fn lko_moe_clear_cache() {
-    *CACHED_LAYER.lock().unwrap() = None;
+    let caches = unsafe { CACHED_EXPERTS.as_ref() };
+    if let Some(caches) = caches {
+        for cache in caches {
+            *cache.lock().unwrap() = Vec::new();
+        }
+    }
 }
 
 /// Fast f32 GEMV (no dequantize) for cached expert weights.
@@ -490,6 +658,24 @@ fn f32_gemv(w: &[f32], x: &[f32], M: usize, K: usize) -> Vec<f32> {
         result[row] = dot;
     }
     result
+}
+
+/// Dequantize a single expert from q4 to f32. Returns (gate, up, down).
+pub fn dequantize_expert_f32(
+    gu_q4: *const u8, gu_len: i32,
+    d_q4: *const u8, d_len: i32,
+) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+    let gu = unsafe { std::slice::from_raw_parts(gu_q4, gu_len as usize) };
+    let d = unsafe { std::slice::from_raw_parts(d_q4, d_len as usize) };
+    // gate_up: M=1024, K=2048
+    let gu_f32 = q4k_dequantize_only(gu, GU_ROWS, GU_K);
+    // down: M=2048, K=512
+    let d_f32 = q4k_dequantize_only(d, D_ROWS, D_K);
+    // Split gate_up into gate(512,2048) and up(512,2048)
+    let gate = gu_f32[..FFN_DIM * GU_K].to_vec();
+    let up = gu_f32[FFN_DIM * GU_K..].to_vec();
+    let down = d_f32;
+    (gate, up, down)
 }
 
 // ── Global frequency tracker ────────────────────────────────────────

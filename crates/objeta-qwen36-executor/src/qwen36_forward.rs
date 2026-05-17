@@ -12,34 +12,56 @@ const N_Q_ATTN: usize = 16; // Q heads for full GQA
 // ── Metal fused GQA FFI ──────────────────────────────────────────────────
 
 extern "C" {
+    // Init Metal GQA resources (RoPE tables, once)
+    fn lko_metal_gqa_init(rope_cos: *const f32, rope_sin: *const f32, max_seq: i32) -> i32;
+    // Load per-layer GQA weights into persistent Metal buffers
+    fn lko_metal_gqa_load_weights(w_qkv: *const u16, w_qkv_bytes: i32, w_o: *const u16, w_o_bytes: i32) -> i32;
+    // Dispatch fused GQA (QKV + RoPE + attention + Q-gate) — returns attn_out (4096 f32)
     fn lko_metal_fused_gqa(
-        w_qkv: *const f32, w_qkv_bytes: i32,
-        h: *const f32,
-        rope_cos: *const f32, rope_sin: *const f32,
-        pos: i32, seq_len: i32, max_seq: i32,
+        h: *const f32, pos: i32, seq_len: i32, max_seq: i32,
         k_cache: *mut f32, v_cache: *mut f32, kv_bytes: i32,
         attn_out: *mut f32,
     ) -> i32;
+    // Dispatch GQA O-proj: output = W_o @ attn_out (f16 weights, f32 attn_out → f32 output)
+    fn lko_metal_gqa_oproj(
+        w_o: *const u16, w_o_bytes: i32,
+        attn_out: *const f32,
+        output: *mut f32, m: i32, k: i32,
+    ) -> i32;
 }
 
-fn gqa_metal_fused(
-    w_qkv: &[f32], h: &[f32],
-    rope_cos: &[f32], rope_sin: &[f32],
+/// Try Metal fused GQA. Returns Some(output) on success, None if Metal unavailable.
+fn gqa_metal_try(
+    w_qkv: &[u16], w_o: &[u16], h: &[f32],
     pos: u32, seq_len: u32, max_seq: u32,
     k_cache: &mut [f32], v_cache: &mut [f32],
-) -> Vec<f32> {
+    first_call: &mut bool,
+) -> Option<Vec<f32>> {
+    let ok = unsafe {
+        lko_metal_gqa_load_weights(
+            w_qkv.as_ptr(), (w_qkv.len() * 2) as i32,
+            w_o.as_ptr(), (w_o.len() * 2) as i32,
+        ) == 0
+    };
+    if !ok { if *first_call { eprintln!("[objeta] Metal GQA: load_weights failed"); *first_call = false; } return None; }
     let mut attn_out = vec![0.0f32; 4096];
-    unsafe {
+    let ok = unsafe {
         lko_metal_fused_gqa(
-            w_qkv.as_ptr(), (w_qkv.len() * 4) as i32,
-            h.as_ptr(),
-            rope_cos.as_ptr(), rope_sin.as_ptr(),
-            pos as i32, seq_len as i32, max_seq as i32,
+            h.as_ptr(), pos as i32, seq_len as i32, max_seq as i32,
             k_cache.as_mut_ptr(), v_cache.as_mut_ptr(), (k_cache.len() * 4) as i32,
             attn_out.as_mut_ptr(),
-        );
-    }
-    attn_out
+        ) == 4096
+    };
+    if !ok { if *first_call { eprintln!("[objeta] Metal GQA: fused_gqa failed (kernel missing?)"); *first_call = false; } return None; }
+    let mut output = vec![0.0f32; HDIM];
+    let ok = unsafe {
+        lko_metal_gqa_oproj(
+            w_o.as_ptr(), (w_o.len() * 2) as i32,
+            attn_out.as_ptr(), output.as_mut_ptr(), HDIM as i32, 4096i32,
+        ) == HDIM as i32
+    };
+    if !ok { if *first_call { eprintln!("[objeta] Metal GQA: oproj failed"); *first_call = false; } return None; }
+    Some(output)
 }
 
 fn rope_cache(max_seq: usize, hd: usize) -> (Vec<f32>, Vec<f32>) {
@@ -56,6 +78,22 @@ fn rope_cache(max_seq: usize, hd: usize) -> (Vec<f32>, Vec<f32>) {
 }
 
 // ── GEMV f32 (NEON + rayon) ──────────────────────────────────────────────
+///
+/// GEMV writing into a pre-allocated buffer (zero allocation).
+pub fn fill_gemv_f32(y: &mut [f32], W: &[f32], x: &[f32], M: usize, K: usize) {
+    assert!(y.len() >= M);
+    if M < 128 {
+        for i in 0..M {
+            let row = &W[i * K..(i + 1) * K];
+            y[i] = dot_f32(row, x);
+        }
+    } else {
+        y.par_iter_mut().enumerate().for_each(|(i, yi)| {
+            let row = &W[i * K..(i + 1) * K];
+            *yi = dot_f32(row, x);
+        });
+    }
+}
 
 pub fn gemv_f32(W: &[f32], x: &[f32], M: usize, K: usize) -> Vec<f32> {
     let mut y = vec![0.0f32; M];
@@ -73,22 +111,85 @@ pub fn gemv_f32(W: &[f32], x: &[f32], M: usize, K: usize) -> Vec<f32> {
     y
 }
 
-// ── GEMV f16 (per-row f16→f32 convert, then NEON + rayon) ────────────────
+/// Direct f16 GEMV using manual f16→f32 + NEON FMA — zero intermediate allocation.
+/// Reads f16 weights without full f32 conversion buffer. 2x less memory BW.
+pub fn gemv_f16_direct(W: &[u16], x: &[f32], M: usize, K: usize) -> Vec<f32> {
+    let mut y = vec![0.0f32; M];
+    if M < 64 {
+        for i in 0..M {
+            let row = &W[i * K..(i + 1) * K];
+            y[i] = dot_f16_manual(row, x);
+        }
+    } else {
+        y.par_iter_mut().enumerate().for_each(|(i, yi)| {
+            let row = &W[i * K..(i + 1) * K];
+            *yi = dot_f16_manual(row, x);
+        });
+    }
+    y
+}
+
+/// Manual f16→f32 conversion + NEON FMA dot product. No unstable intrinsics.
+#[inline]
+fn dot_f16_manual(a: &[u16], b: &[f32]) -> f32 {
+    let n = a.len();
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        use std::arch::aarch64::*;
+        let mut sum = vdupq_n_f32(0.0);
+        let mut j = 0usize;
+        // Process 8 f16 at a time: unpack to f32 then FMA
+        while j + 8 <= n {
+            // Load 8 f32 inputs
+            let x0 = vld1q_f32(b.as_ptr().add(j));
+            let x1 = vld1q_f32(b.as_ptr().add(j + 4));
+            // Convert 8 f16→f32 manually
+            let w0 = f16_to_f32(a[j]);
+            let w1 = f16_to_f32(a[j+1]);
+            let w2 = f16_to_f32(a[j+2]);
+            let w3 = f16_to_f32(a[j+3]);
+            let w4 = f16_to_f32(a[j+4]);
+            let w5 = f16_to_f32(a[j+5]);
+            let w6 = f16_to_f32(a[j+6]);
+            let w7 = f16_to_f32(a[j+7]);
+            sum = vfmaq_f32(sum, vld1q_f32([w0,w1,w2,w3].as_ptr()), x0);
+            sum = vfmaq_f32(sum, vld1q_f32([w4,w5,w6,w7].as_ptr()), x1);
+            j += 8;
+        }
+        while j + 4 <= n {
+            let w0 = f16_to_f32(a[j]);
+            let w1 = f16_to_f32(a[j+1]);
+            let w2 = f16_to_f32(a[j+2]);
+            let w3 = f16_to_f32(a[j+3]);
+            let x0 = vld1q_f32(b.as_ptr().add(j));
+            sum = vfmaq_f32(sum, vld1q_f32([w0,w1,w2,w3].as_ptr()), x0);
+            j += 4;
+        }
+        let mut s = vaddvq_f32(sum);
+        while j < n { s += f16_to_f32(a[j]) * b[j]; j += 1; }
+        return s;
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    { a.iter().zip(b.iter()).map(|(h, x)| f16_to_f32(*h) * x).sum() }
+}
+
+// ── GEMV f16 (f16→f32 conversion + NEON GEMV) ───────────────────────────
+
+pub fn gemv_f16_buf(W: &[u16], x: &[f32], M: usize, K: usize, buf: &mut Vec<f32>) -> Vec<f32> {
+    buf.clear();
+    buf.reserve(M * K);
+    buf.extend(W.iter().map(|&h| f16_to_f32(h)));
+    gemv_f32(buf, x, M, K)
+}
 
 pub fn gemv_f16(W: &[u16], x: &[f32], M: usize, K: usize) -> Vec<f32> {
-    let mut y = vec![0.0f32; M];
-    y.par_iter_mut().enumerate().for_each(|(i, yi)| {
-        let row = &W[i * K..(i + 1) * K];
-        // Convert f16→f32 inline (avoids shared buffer contention)
-        let buf: Vec<f32> = row.iter().map(|&h| f16_to_f32(h)).collect();
-        *yi = dot_f32(&buf, x);
-    });
-    y
+    let w_f32: Vec<f32> = W.iter().map(|&h| f16_to_f32(h)).collect();
+    gemv_f32(&w_f32, x, M, K)
 }
 
 /// Optimized dot product using NEON where available.
 #[inline]
-fn dot_f32(a: &[f32], b: &[f32]) -> f32 {
+pub(crate) fn dot_f32(a: &[f32], b: &[f32]) -> f32 {
     let n = a.len();
     #[cfg(target_arch = "aarch64")]
     unsafe {
@@ -374,6 +475,14 @@ pub extern "C" fn lko_q36_sigmoid(x: *mut f32, n: i32) -> i32 {
 
 // ── GQA Attention (fused: QKV gemv + RoPE + softmax + weighted sum + output proj) ──
 
+/// Rayon-parallel f16 GEMV: converts f16→f32 on the fly, zero intermediate buffer.
+fn gemv_f16_par(W: &[u16], x: &[f32], M: usize, K: usize) -> Vec<f32> {
+    (0..M).into_par_iter().map(|row| {
+        let r = &W[row*K..(row+1)*K];
+        r.iter().zip(x.iter()).map(|(&h, &xv)| f16_to_f32(h) * xv).sum()
+    }).collect()
+}
+
 /// Full GQA attention in Rust. All buffers pre-allocated.
 /// Returns via `output` (n_heads * head_dim f32).
 pub fn gqa_attention_fused(
@@ -450,13 +559,11 @@ pub fn gqa_attention_fused(
         let oh = &mut attn_out[h * head_dim..(h + 1) * head_dim];
         oh.fill(0.0);
 
-        // Scores
+        // Scores with NEON dot_f32
         let mut max_s = f32::NEG_INFINITY;
         for t in 0..seq_len {
             let kt = &k_cache[(kv_h * max_seq + t) * head_dim..(kv_h * max_seq + t) * head_dim + head_dim];
-            let mut dot = 0.0;
-            for d in 0..head_dim { dot += qh[d] * kt[d]; }
-            scores[t] = dot * scale;
+            scores[t] = dot_f32(qh, kt) * scale;
             if scores[t] > max_s { max_s = scores[t]; }
         }
 
@@ -477,7 +584,7 @@ pub fn gqa_attention_fused(
         for d in 0..head_dim { oh[d] *= q_gate[g_off + d]; }
     }
 
-    // Output projection: attn_out (4096) → ao (2048)
+    // Output projection
     let ao = gemv_f16(w_o, attn_out, HDIM, n_heads * head_dim);
     output[..HDIM].copy_from_slice(&ao);
 }
@@ -486,6 +593,7 @@ pub fn gqa_attention_fused(
 
 /// Runs complete DeltaNet forward in Rust.
 /// Returns attention output (HDIM f32).
+/// Pre-converts f16 weights to f32 once to avoid per-row allocation overhead.
 pub fn delta_net_fused(
     w_qkv: &[u16], w_z: &[u16], w_b: &[f32], w_a: &[f32],
     w_out: &[u16], w_conv: &[f32], w_norm: &[f32],
@@ -494,26 +602,12 @@ pub fn delta_net_fused(
     conv_state: &mut [f32], conv_ptr: &mut usize,
     S_state: &mut [f32],
     ao_out: &mut [f32],
+    scratch_f32: &mut Vec<f32>,
 ) {
-    use std::time::Instant;
-    let t_start = Instant::now();
-
-    // Projections
-    let mixed_qkv = gemv_f16(w_qkv, h, 8192, HDIM);
-    let t1 = t_start.elapsed().as_secs_f64();
-    let z = gemv_f16(w_z, h, 4096, HDIM);
-    let t2 = t_start.elapsed().as_secs_f64();
+    let mixed_qkv = gemv_f16_buf(w_qkv, h, 8192, HDIM, scratch_f32);
+    let z = gemv_f16_buf(w_z, h, 4096, HDIM, scratch_f32);
     let b = gemv_f32(w_b, h, 32, HDIM);
     let a_vec = gemv_f32(w_a, h, 32, HDIM);
-    let t3 = t_start.elapsed().as_secs_f64();
-
-    if t3 > 0.1 {
-        eprintln!("DELTANET GEMV: qkv={:.0}ms z={:.0}ms b+a={:.0}ms (total={:.0}ms)",
-            (t1) * 1000.0,
-            (t2 - t1) * 1000.0,
-            (t3 - t2) * 1000.0,
-            t3 * 1000.0);
-    }
 
     // Conv1d ring buffer
     let ptr = *conv_ptr;
@@ -571,7 +665,7 @@ pub fn delta_net_fused(
     let gated = rms_norm_gated(&output, &z_rs, w_norm, 32, 128);
 
     // Output projection
-    let ao = gemv_f16(w_out, &gated, HDIM, 4096);
+    let ao = gemv_f16_buf(w_out, &gated, HDIM, 4096, scratch_f32);
     ao_out.copy_from_slice(&ao);
 }
 
@@ -598,6 +692,68 @@ pub extern "C" fn lko_q36_fused_layer(
 ) -> i32 {
     // Stub — fused API not yet used. Use individual C calls.
     -1
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LKO Scheduler: Phase-aware execution policy
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[derive(Clone, Copy, PartialEq)]
+enum AttnPolicy {
+    Full,       // Full GQA or DeltaNet forward
+    Collapse,   // Koopman identity (skip, J≈I)
+    Skip,       // No attention at all
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum MoEPolicy {
+    Full,       // Dequantize + GEMV all routed experts
+    Adaptive,   // Entropy-conditioned top-k pruning
+    Skip,       // Skip MoE entirely
+}
+
+#[derive(Clone, Copy)]
+struct LayerPolicy {
+    attn: AttnPolicy,
+    moe: MoEPolicy,
+    precision_bits: u8,  // target precision for weights (3-16)
+    is_steering: bool,   // is this a GQA course-correction layer?
+}
+
+/// Build static policy table for Qwen3.6-35B-A3B based on LKO phase measurements.
+/// GQA at layers 3,7,11,15,19,23,27,31,35,39 (every 4th).
+/// UNFOLD: L0-L2 (sacred), ISOMETRIC: L3-L35, DIVERGENT: L36-L39.
+fn build_policy_table(fusion_ratio: f64, moe_on_deltanet: bool) -> [LayerPolicy; 40] {
+    let stride = (1.0 / fusion_ratio.max(0.01)).round() as usize;
+    let mut delta_count: usize = 0;
+    let mut table = [LayerPolicy {
+        attn: AttnPolicy::Full, moe: MoEPolicy::Full, precision_bits: 16, is_steering: false
+    }; 40];
+
+    for l in 0..40 {
+        let is_gqa = l % 4 == 3;
+        let phase = if l < 3 { "unfold" } else if l > 35 { "divergent" } else { "isometric" };
+
+        let (attn, moe, prec, steering) = if is_gqa {
+            delta_count = 0;
+            // GQA: course correction — always full, high precision
+            (AttnPolicy::Full, MoEPolicy::Adaptive, 16, true)
+        } else {
+            delta_count += 1;
+            let compute = delta_count % stride.max(1) == 0;
+            let attn = if compute { AttnPolicy::Full } else { AttnPolicy::Collapse };
+            let moe = if moe_on_deltanet { MoEPolicy::Adaptive } else { MoEPolicy::Skip };
+            let prec = match phase {
+                "unfold" => 16,
+                "divergent" => 8,
+                _ => 4, // ISOMETRIC: low precision (q4)
+            };
+            (attn, moe, prec, false)
+        };
+
+        table[l] = LayerPolicy { attn, moe, precision_bits: prec, is_steering: steering };
+    }
+    table
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -642,11 +798,30 @@ pub struct Qwen36Runner {
     scratch_qkv: Vec<f32>, scratch_q: Vec<f32>, scratch_k: Vec<f32>, scratch_v: Vec<f32>,
     scratch_attn_out: Vec<f32>,
     scratch_scores: Vec<f32>, scratch_attn: Vec<f32>,
+    scratch_f32: Vec<f32>, // reusable f16→f32 conversion buffer
     max_seq: usize,
     /// DeltaNet fusion: fraction of DeltaNet layers to compute (1.0=all, 0.33=1 per GQA block)
     pub fusion_ratio: f64,
     /// Skip MoE+shared expert on non-GQA (DeltaNet) layers
     pub moe_on_deltanet: bool,
+    /// Scheduler: phase-aware execution policy per layer
+    policy_table: [LayerPolicy; 40],
+    /// Whether Metal fused GQA is available (tested at init)
+    pub metal_gqa_ok: bool,
+    metal_gqa_first_fail: bool,
+    /// Expert residency cache: (layer, eid) → (gate_f32, up_f32, down_f32)
+    expert_cache: std::collections::HashMap<(usize, usize), (Vec<f32>, Vec<f32>, Vec<f32>)>,
+    expert_cache_order: Vec<(usize, usize)>, // LRU order, front = most recent
+    expert_cache_max: usize,
+    /// Expert cache status: number of experts cached per layer (0 = not built)
+    pub expert_cache_size: usize,
+    /// Per-layer expert frequency data collected during warmup
+    expert_freq_ready: bool,
+    /// Pre-allocated scratch buffers for MoE GEMV (reused, zero allocation)
+    moe_gate_buf: Vec<f32>,      // 512
+    moe_up_buf: Vec<f32>,        // 512
+    moe_hidden_buf: Vec<f32>,    // 512
+    moe_down_buf: Vec<f32>,      // 2048
 }
 
 impl Qwen36Runner {
@@ -666,6 +841,9 @@ impl Qwen36Runner {
         for l in 0..40 {
             layers.push(load_layer_weights(bin_dir, l)?);
         }
+
+        // Build scheduler policy table
+        let policy_table = build_policy_table(0.33, false);
 
         // Apply strategy.json if present (family-aware precision)
         if let Some(strategy) = crate::strategy::load_strategy(bin_dir) {
@@ -727,6 +905,17 @@ impl Qwen36Runner {
 
         let (rope_cos, rope_sin) = rope_cache(max_seq, HEAD_DIM);
 
+        // Init Metal GQA persistent resources (RoPE tables, once)
+        let metal_gqa_ok = unsafe {
+            let r = lko_metal_gqa_init(rope_cos.as_ptr(), rope_sin.as_ptr(), max_seq as i32);
+            r == 0
+        };
+        if metal_gqa_ok {
+            eprintln!("[objeta] Metal GQA: OK");
+        } else {
+            eprintln!("[objeta] Metal GQA: unavailable, using CPU fallback");
+        }
+
         // Pre-load routers + mmap MoE weights
         let mut routers = Vec::with_capacity(40);
         let mut gu_mmaps = Vec::with_capacity(40);
@@ -744,19 +933,36 @@ impl Qwen36Runner {
             down_mmaps.push(unsafe { memmap2::Mmap::map(&d_f).unwrap() });
         }
 
+        // Init per-layer expert caches
+        unsafe { crate::moe_dispatch::lko_moe_init_caches(40); }
+        // Init per-layer frequency trackers
+        unsafe { crate::moe_dispatch::lko_moe_init_freq_tracker(40); }
+
         Some(Qwen36Runner {
             embed, final_norm, layers,
             kv_k, kv_v, conv_states, conv_ptrs, S_states,
             rope_cos, rope_sin,
             routers, gu_mmaps, down_mmaps,
+            policy_table,
             scratch_qkv: vec![0.0f32; 9216],
     scratch_q: vec![0.0f32; 16*256],
             scratch_k: vec![0.0f32; 2*256], scratch_v: vec![0.0f32; 2*256],
             scratch_attn_out: vec![0.0f32; 16*256],
     scratch_scores: vec![0.0f32; max_seq], scratch_attn: vec![0.0f32; max_seq],
+            scratch_f32: Vec::with_capacity(20_000_000), // ~80MB, for largest f16→f32 GEMV
             max_seq,
-            fusion_ratio: 1.0, // default: all DeltaNet layers
-            moe_on_deltanet: true, // default: MoE on all layers
+            fusion_ratio: 0.33,
+            moe_on_deltanet: false,  // matches initial policy_table
+            metal_gqa_ok, metal_gqa_first_fail: true,
+            expert_cache: std::collections::HashMap::new(),
+            expert_cache_order: Vec::new(),
+            expert_cache_max: 50, // ~630MB, small — OS page cache handles q4→f32
+            expert_cache_size: 0,
+            expert_freq_ready: false,
+            moe_gate_buf: vec![0.0f32; 512],
+            moe_up_buf: vec![0.0f32; 512],
+            moe_hidden_buf: vec![0.0f32; 512],
+            moe_down_buf: vec![0.0f32; HDIM],
         })
     }
 
@@ -778,72 +984,99 @@ impl Qwen36Runner {
         let mut deltas_skipped = 0u32;
 
         for l in 0..40 {
+            let policy = &self.policy_table[l];
             let lw = &self.layers[l];
 
-            // Input norm
+            // ── Norm (always, cheap) ──
             let t0 = Instant::now();
             if !lw.input_norm.is_empty() {
                 h = rms_norm(&h, &lw.input_norm);
             }
             t_norm += t0.elapsed().as_secs_f64();
 
-            // Attention
-            let ao = if lw.is_gqa {
-                delta_count = 0; // reset on GQA checkpoint
-                let t0 = Instant::now();
-                let mut ao = vec![0.0f32; HDIM];
-                gqa_attention_fused(
-                    &lw.w_qkv, &lw.w_o, &h,
-                    &mut self.kv_k[l], &mut self.kv_v[l],
-                    &self.rope_cos, &self.rope_sin,
-                    16, 2, HEAD_DIM, pos, seq_len, self.max_seq,
-                    &mut ao,
-                    &mut self.scratch_qkv, &mut self.scratch_q,
-                    &mut self.scratch_k, &mut self.scratch_v,
-                    &mut self.scratch_attn_out,
-                    &mut self.scratch_scores, &mut self.scratch_attn,
-                );
-                t_gqa += t0.elapsed().as_secs_f64();
-                ao
-            } else if lw.has_attn {
-                delta_count += 1;
-                if delta_count % stride.max(1) == 0 {
-                    let t0 = Instant::now();
-                    let mut ao = vec![0.0f32; HDIM];
-                    delta_net_fused(
-                        &lw.w_qkv, &lw.w_z, &lw.w_b, &lw.w_a,
-                        &lw.w_o, &lw.w_conv, &lw.w_norm,
-                        &lw.dt_bias, &lw.a_log,
-                        &h,
-                        &mut self.conv_states[l], &mut self.conv_ptrs[l],
-                        &mut self.S_states[l],
-                        &mut ao,
-                    );
-                    t_delta += t0.elapsed().as_secs_f64();
-                    ao
-                } else {
-                    deltas_skipped += 1;
-                    vec![0.0f32; HDIM] // skip: identity delta
+            // ── Attention (policy-driven) ──
+            let ao = match policy.attn {
+                AttnPolicy::Full => {
+                    if policy.is_steering {
+                        // GQA steering layer: Metal fused kernel
+                        let t0 = Instant::now();
+                        let ao = if self.metal_gqa_ok {
+                            if let Some(ao) = gqa_metal_try(
+                                &lw.w_qkv, &lw.w_o, &h,
+                                pos as u32, seq_len as u32, self.max_seq as u32,
+                                &mut self.kv_k[l], &mut self.kv_v[l],
+                                &mut self.metal_gqa_first_fail,
+                            ) { ao } else {
+                                let mut ao = vec![0.0f32; HDIM];
+                                gqa_attention_fused(
+                                    &lw.w_qkv, &lw.w_o, &h,
+                                    &mut self.kv_k[l], &mut self.kv_v[l],
+                                    &self.rope_cos, &self.rope_sin,
+                                    16, 2, HEAD_DIM, pos, seq_len, self.max_seq,
+                                    &mut ao,
+                                    &mut self.scratch_qkv, &mut self.scratch_q,
+                                    &mut self.scratch_k, &mut self.scratch_v,
+                                    &mut self.scratch_attn_out,
+                                    &mut self.scratch_scores, &mut self.scratch_attn,
+                                );
+                                ao
+                            }
+                        } else {
+                            let mut ao = vec![0.0f32; HDIM];
+                            gqa_attention_fused(
+                                &lw.w_qkv, &lw.w_o, &h,
+                                &mut self.kv_k[l], &mut self.kv_v[l],
+                                &self.rope_cos, &self.rope_sin,
+                                16, 2, HEAD_DIM, pos, seq_len, self.max_seq,
+                                &mut ao,
+                                &mut self.scratch_qkv, &mut self.scratch_q,
+                                &mut self.scratch_k, &mut self.scratch_v,
+                                &mut self.scratch_attn_out,
+                                &mut self.scratch_scores, &mut self.scratch_attn,
+                            );
+                            ao
+                        };
+                        t_gqa += t0.elapsed().as_secs_f64();
+                        ao
+                    } else {
+                        // DeltaNet transport layer
+                        let t0 = Instant::now();
+                        let mut ao = vec![0.0f32; HDIM];
+                        delta_net_fused(
+                            &lw.w_qkv, &lw.w_z, &lw.w_b, &lw.w_a,
+                            &lw.w_o, &lw.w_conv, &lw.w_norm,
+                            &lw.dt_bias, &lw.a_log,
+                            &h,
+                            &mut self.conv_states[l], &mut self.conv_ptrs[l],
+                            &mut self.S_states[l],
+                            &mut ao,
+                            &mut self.scratch_f32,
+                        );
+                        t_delta += t0.elapsed().as_secs_f64();
+                        ao
+                    }
                 }
-            } else {
-                vec![0.0f32; HDIM]
+                AttnPolicy::Collapse => {
+                    // Koopman collapse: J≈I, identity skip
+                    vec![0.0f32; HDIM]
+                }
+                AttnPolicy::Skip => {
+                    vec![0.0f32; HDIM]
+                }
             };
 
             for i in 0..HDIM { h[i] += ao[i]; }
 
-            // Post-attention norm
+            // ── Post-attention norm ──
             let t0 = Instant::now();
             if !lw.post_norm.is_empty() {
                 h = rms_norm(&h, &lw.post_norm);
             }
             t_norm += t0.elapsed().as_secs_f64();
 
-            // Shared expert + MoE: skip on non-GQA layers if moe_on_deltanet=false
-            let compute_moe = lw.is_gqa || self.moe_on_deltanet;
-
-            // Shared expert
+            // ── Shared expert (policy-driven) ──
             let t0 = Instant::now();
-            if compute_moe && !lw.se_gate.is_empty() {
+            if policy.moe != MoEPolicy::Skip && !lw.se_gate.is_empty() {
                 let gate = gemv_f16(&lw.se_gate, &h, 512, HDIM);
                 let up = gemv_f16(&lw.se_up, &h, 512, HDIM);
                 let mut hidden = gate.clone();
@@ -854,19 +1087,20 @@ impl Qwen36Runner {
             }
             t_shared += t0.elapsed().as_secs_f64();
 
-            // MoE dispatch
+            // ── MoE dispatch (policy-driven) ──
             let t0 = Instant::now();
-            if compute_moe {
+            if policy.moe != MoEPolicy::Skip {
                 let moe_out = self.call_moe(&h, l);
                 for i in 0..HDIM { h[i] += moe_out[i]; }
             }
             t_moe += t0.elapsed().as_secs_f64();
         }
 
-        let skips = 30 - deltas_skipped as usize;
-        eprintln!("TIMING: delta={:.0}ms gqa={:.0}ms shared={:.0}ms moe={:.0}ms | delta_computed={}/30 stride={} fusion={:.2}",
+        let n_full: usize = self.policy_table.iter().filter(|p| p.attn == AttnPolicy::Full).count();
+        let n_collapse: usize = self.policy_table.iter().filter(|p| p.attn == AttnPolicy::Collapse).count();
+        eprintln!("TIMING: delta={:.0}ms gqa={:.0}ms shared={:.0}ms moe={:.0}ms | scheduler: full={} collapse={} fusion={:.2}",
             t_delta*1000.0, t_gqa*1000.0, t_shared*1000.0, t_moe*1000.0,
-            skips, stride, self.fusion_ratio);
+            n_full, n_collapse, self.fusion_ratio);
 
         (h, [t_delta, t_gqa, t_shared, t_moe, t_norm])
     }
@@ -879,54 +1113,79 @@ impl Qwen36Runner {
 };
 
         for l in 0..40 {
+            let policy = self.policy_table[l];
             let lw = &self.layers[l];
 
-            // Input norm
             if !lw.input_norm.is_empty() {
                 h = rms_norm(&h, &lw.input_norm);
             }
 
-            // Attention
-            let ao = if lw.is_gqa {
-                let mut ao = vec![0.0f32; HDIM];
-                gqa_attention_fused(
-                    &lw.w_qkv, &lw.w_o, &h,
-                    &mut self.kv_k[l], &mut self.kv_v[l],
-                    &self.rope_cos, &self.rope_sin,
-                    16, 2, HEAD_DIM, pos, seq_len, self.max_seq,
-                    &mut ao,
-                    &mut self.scratch_qkv, &mut self.scratch_q,
-                    &mut self.scratch_k, &mut self.scratch_v,
-                    &mut self.scratch_attn_out,
-                    &mut self.scratch_scores, &mut self.scratch_attn,
-                );
-                ao
-            } else if lw.has_attn {
-                let mut ao = vec![0.0f32; HDIM];
-                delta_net_fused(
-                    &lw.w_qkv, &lw.w_z, &lw.w_b, &lw.w_a,
-                    &lw.w_o, &lw.w_conv, &lw.w_norm,
-                    &lw.dt_bias, &lw.a_log,
-                    &h,
-                    &mut self.conv_states[l], &mut self.conv_ptrs[l],
-                    &mut self.S_states[l],
-                    &mut ao,
-                );
-                ao
-            } else {
-                vec![0.0f32; HDIM]
+            let ao = match policy.attn {
+                AttnPolicy::Full => {
+                    if policy.is_steering {
+                        if self.metal_gqa_ok {
+                            if let Some(ao) = gqa_metal_try(
+                                &lw.w_qkv, &lw.w_o, &h,
+                                pos as u32, seq_len as u32, self.max_seq as u32,
+                                &mut self.kv_k[l], &mut self.kv_v[l],
+                                &mut self.metal_gqa_first_fail,
+                            ) { ao } else {
+                                let mut ao = vec![0.0f32; HDIM];
+                                gqa_attention_fused(
+                                    &lw.w_qkv, &lw.w_o, &h,
+                                    &mut self.kv_k[l], &mut self.kv_v[l],
+                                    &self.rope_cos, &self.rope_sin,
+                                    16, 2, HEAD_DIM, pos, seq_len, self.max_seq,
+                                    &mut ao,
+                                    &mut self.scratch_qkv, &mut self.scratch_q,
+                                    &mut self.scratch_k, &mut self.scratch_v,
+                                    &mut self.scratch_attn_out,
+                                    &mut self.scratch_scores, &mut self.scratch_attn,
+                                );
+                                ao
+                            }
+                        } else {
+                            let mut ao = vec![0.0f32; HDIM];
+                            gqa_attention_fused(
+                                &lw.w_qkv, &lw.w_o, &h,
+                                &mut self.kv_k[l], &mut self.kv_v[l],
+                                &self.rope_cos, &self.rope_sin,
+                                16, 2, HEAD_DIM, pos, seq_len, self.max_seq,
+                                &mut ao,
+                                &mut self.scratch_qkv, &mut self.scratch_q,
+                                &mut self.scratch_k, &mut self.scratch_v,
+                                &mut self.scratch_attn_out,
+                                &mut self.scratch_scores, &mut self.scratch_attn,
+                            );
+                            ao
+                        }
+                    } else {
+                        let mut ao = vec![0.0f32; HDIM];
+                        delta_net_fused(
+                            &lw.w_qkv, &lw.w_z, &lw.w_b, &lw.w_a,
+                            &lw.w_o, &lw.w_conv, &lw.w_norm,
+                            &lw.dt_bias, &lw.a_log,
+                            &h,
+                            &mut self.conv_states[l], &mut self.conv_ptrs[l],
+                            &mut self.S_states[l],
+                            &mut ao,
+                            &mut self.scratch_f32,
+                        );
+                        ao
+                    }
+                }
+                AttnPolicy::Collapse | AttnPolicy::Skip => {
+                    vec![0.0f32; HDIM]
+                }
             };
 
-            // Residual
             for i in 0..HDIM { h[i] += ao[i]; }
 
-            // Post-attention norm
             if !lw.post_norm.is_empty() {
                 h = rms_norm(&h, &lw.post_norm);
             }
 
-            // Shared expert (sigmoid-gated FFN, ffn_dim=512)
-            if !lw.se_gate.is_empty() {
+            if policy.moe != MoEPolicy::Skip && !lw.se_gate.is_empty() {
                 let gate = gemv_f16(&lw.se_gate, &h, 512, HDIM);
                 let up = gemv_f16(&lw.se_up, &h, 512, HDIM);
                 let mut hidden = gate.clone();
@@ -936,28 +1195,156 @@ impl Qwen36Runner {
                 for i in 0..HDIM { h[i] += se_out[i] * se_gate; }
             }
 
-            // MoE dispatch
-            let moe_out = self.call_moe(&h, l);
-            for i in 0..HDIM { h[i] += moe_out[i]; }
+            if policy.moe != MoEPolicy::Skip {
+                let moe_out = self.call_moe(&h, l);
+                for i in 0..HDIM { h[i] += moe_out[i]; }
+            }
         }
 
         h
     }
 
-    fn call_moe(&self, h: &[f32], l: usize) -> Vec<f32> {
+    fn call_moe(&mut self, h: &[f32], l: usize) -> Vec<f32> {
+        // Adaptive top-k
+        let (eidx, ew, _n_selected) = crate::moe_dispatch::router_topk_adaptive(
+            &self.routers[l], h, 8,
+        );
+
         let mut out = vec![0.0f32; HDIM];
-        let mut eidx = vec![0i32; 8];
-        let mut ew = vec![0.0f32; 8];
-        unsafe {
-            crate::moe_dispatch::lko_moe_forward_layer(
-                self.routers[l].as_ptr(),
-                self.gu_mmaps[l].as_ptr(), self.gu_mmaps[l].len() as i32,
-                self.down_mmaps[l].as_ptr(), self.down_mmaps[l].len() as i32,
-                h.as_ptr(), 8, l as i32,
-                eidx.as_mut_ptr(), ew.as_mut_ptr(), out.as_mut_ptr(),
-            );
+
+        // ── Phase 1: gather expert IDs, separate cached from uncached ──
+        let n = eidx.len();
+        let mut uncached_ids: Vec<usize> = Vec::with_capacity(n);
+        let mut uncached_rws: Vec<f32> = Vec::with_capacity(n);
+
+        for (&eid, &rw) in eidx.iter().zip(ew.iter()) {
+            let eid = eid as usize;
+            let key = (l, eid);
+
+            // Check hashmap cache first
+            if let Some(pos) = self.expert_cache_order.iter().position(|k| *k == key) {
+                self.expert_cache_order.remove(pos);
+                self.expert_cache_order.insert(0, key);
+                let (gate, up, down) = &self.expert_cache[&key];
+                // Cached: compute with pre-allocated scratch (fast, no I/O)
+                let gate_out = &mut self.moe_gate_buf;
+                fill_gemv_f32(gate_out, gate, h, 512, HDIM);
+                let up_out = &mut self.moe_up_buf;
+                fill_gemv_f32(up_out, up, h, 512, HDIM);
+                let hidden = &mut self.moe_hidden_buf;
+                for i in 0..512 { hidden[i] = gate_out[i] / (1.0 + (-gate_out[i]).exp()) * up_out[i]; }
+                let down_out = &mut self.moe_down_buf;
+                fill_gemv_f32(down_out, down, hidden, HDIM, 512);
+                for i in 0..HDIM { out[i] += down_out[i] * rw; }
+            } else {
+                uncached_ids.push(eid);
+                uncached_rws.push(rw);
+            }
         }
+
+        if uncached_ids.is_empty() { return out; }
+
+        // ── Phase 2: parallel mmap read + dequant + GEMV for uncached ──
+        // Raw pointer through usize for Send+Sync (mmap is read-only, concurrent reads safe)
+        let gu_addr = self.gu_mmaps[l].as_ptr() as usize;
+        let d_addr = self.down_mmaps[l].as_ptr() as usize;
+
+        let results: Vec<(Vec<f32>, (usize, usize), (Vec<f32>, Vec<f32>, Vec<f32>))> =
+            uncached_ids.par_iter().zip(uncached_rws.par_iter()).map(|(&eid, &rw)| {
+                let gu_off = eid * 1_310_720;
+                let d_off = eid * 655_360;
+                let gu_ptr = unsafe { (gu_addr as *const u8).add(gu_off) };
+                let d_ptr = unsafe { (d_addr as *const u8).add(d_off) };
+                let (gate, up, down) = crate::moe_dispatch::dequantize_expert_f32(
+                    gu_ptr, 1_310_720, d_ptr, 655_360,
+                );
+
+                // GEMV with local scratch (allocation: ~8KB, vs SSD read: ~15ms)
+                let mut gate_out = vec![0.0f32; 512];
+                fill_gemv_f32(&mut gate_out, &gate, h, 512, HDIM);
+                let mut up_out = vec![0.0f32; 512];
+                fill_gemv_f32(&mut up_out, &up, h, 512, HDIM);
+                let mut hidden = vec![0.0f32; 512];
+                for i in 0..512 { hidden[i] = gate_out[i] / (1.0 + (-gate_out[i]).exp()) * up_out[i]; }
+                let mut down_out = vec![0.0f32; HDIM];
+                fill_gemv_f32(&mut down_out, &down, &hidden, HDIM, 512);
+                for v in &mut down_out { *v *= rw; }
+
+                (down_out, (l, eid), (gate, up, down))
+            }).collect();
+
+        // ── Phase 3: sum outputs + update cache ──
+        for (output, key, entry) in results {
+            for i in 0..HDIM { out[i] += output[i]; }
+            self.expert_cache.insert(key, entry);
+            self.expert_cache_order.insert(0, key);
+        }
+        while self.expert_cache_order.len() > 50 {
+            if let Some(old_key) = self.expert_cache_order.pop() {
+                self.expert_cache.remove(&old_key);
+            }
+        }
+
         out
+    }
+
+    /// Warmup: actually dequantize + GEMV the routed experts to fault q4 pages into OS cache.
+    /// Accesses ALL bytes of each expert's q4 data, forcing the kernel to cache them in RAM.
+    pub fn warmup(&mut self, n_tokens: usize) {
+        if self.expert_freq_ready { return; }
+        eprintln!("[objeta] Warming OS page cache by dequantizing real experts ({n_tokens} tokens)...");
+        let vocab = self.embed.len() / (HDIM * 4);
+        let step = vocab.max(1) / n_tokens.max(1);
+        for t in 0..n_tokens {
+            let tid = (t * step).min(vocab - 1);
+            let h = self.embed_token(tid);
+            for l in 0..40 {
+                let run_moe = self.layers[l].is_gqa || self.moe_on_deltanet;
+                if !run_moe { continue; }
+                // Actually dequantize + GEMV all routed experts (reads ALL q4 pages into OS cache)
+                let _ = self.call_moe(&h, l);
+            }
+        }
+        // Clear hashmap cache after warmup (these were random tokens, not our prompt)
+        self.expert_cache.clear();
+        self.expert_cache_order.clear();
+        self.expert_freq_ready = true;
+        eprintln!("[objeta] OS page cache warmed ({} experts faulted in).", n_tokens * 10 * 8);
+    }
+
+    /// Get token embedding from mmap (zero-copy, returns Vec for convenience).
+    fn embed_token(&self, token_id: usize) -> Vec<f32> {
+        let ptr = unsafe { self.embed.as_ptr().add(token_id * HDIM * 4) as *const f32 };
+        (0..HDIM).map(|i| unsafe { *ptr.add(i) }).collect()
+    }
+
+    /// Build per-layer expert caches from warmup frequency data.
+    /// Only caches layers where MoE actually runs (GQA layers if moe_on_deltanet=false).
+    pub fn build_expert_caches(&mut self, cache_size: usize) {
+        if !self.expert_freq_ready {
+            eprintln!("[objeta] Warning: building caches without warmup — hit rate will be low");
+        }
+        let total_layers: usize = (0..40).filter(|&l| self.layers[l].is_gqa || self.moe_on_deltanet).count();
+        let mem_per_expert_mb = (512.0 * 2048.0 * 3.0 * 4.0) / (1024.0 * 1024.0); // ~12.6MB f32
+        let est_mb = total_layers as f64 * cache_size as f64 * mem_per_expert_mb;
+        eprintln!("[objeta] Building expert caches ({cache_size} experts/layer × {total_layers} layers, ~{:.0}MB)...", est_mb);
+
+        let mut total = 0i32;
+        for l in 0..40 {
+            let run_moe = self.layers[l].is_gqa || self.moe_on_deltanet;
+            if !run_moe { continue; }
+            let n = unsafe {
+                crate::moe_dispatch::lko_moe_build_cache(
+                    l as i32,
+                    self.gu_mmaps[l].as_ptr(), self.gu_mmaps[l].len() as i32,
+                    self.down_mmaps[l].as_ptr(), self.down_mmaps[l].len() as i32,
+                    cache_size as i32,
+                )
+            };
+            total += n;
+        }
+        self.expert_cache_size = cache_size;
+        eprintln!("[objeta] Cached {total} experts across {total_layers} active layers.");
     }
 }
 
@@ -1105,10 +1492,31 @@ pub extern "C" fn lko_runner_init(bin_dir: *const i8, max_seq: i32) -> i32 {
 pub extern "C" fn lko_runner_set_fusion_ratio(ratio: f64) -> i32 {
     unsafe {
         match &mut RUNNER {
-            Some(r) => { r.fusion_ratio = ratio.clamp(0.0, 1.0); 1 }
+            Some(r) => {
+                let r = r;
+                r.fusion_ratio = ratio.clamp(0.0, 1.0);
+                r.policy_table = build_policy_table(r.fusion_ratio, r.moe_on_deltanet);
+                1
+            }
             None => 0,
         }
     }
+}
+
+/// Run warmup to collect expert routing frequencies.
+#[no_mangle]
+pub extern "C" fn lko_runner_warmup(n_tokens: i32) -> i32 {
+    let runner = unsafe { RUNNER.as_mut() }.expect("runner not initialized");
+    runner.warmup(n_tokens as usize);
+    1
+}
+
+/// Build per-layer expert caches from warmup data.
+#[no_mangle]
+pub extern "C" fn lko_runner_build_caches(cache_size: i32) -> i32 {
+    let runner = unsafe { RUNNER.as_mut() }.expect("runner not initialized");
+    runner.build_expert_caches(cache_size as usize);
+    runner.expert_cache_size as i32
 }
 
 /// Skip MoE dispatch + shared expert on non-GQA (DeltaNet) layers.
@@ -1116,7 +1524,12 @@ pub extern "C" fn lko_runner_set_fusion_ratio(ratio: f64) -> i32 {
 pub extern "C" fn lko_runner_set_moe_on_deltanet(enabled: i32) -> i32 {
     unsafe {
         match &mut RUNNER {
-            Some(r) => { r.moe_on_deltanet = enabled != 0; 1 }
+            Some(r) => {
+                let r = r;
+                r.moe_on_deltanet = enabled != 0;
+                r.policy_table = build_policy_table(r.fusion_ratio, r.moe_on_deltanet);
+                1
+            }
             None => 0,
         }
     }
@@ -1129,6 +1542,100 @@ pub extern "C" fn lko_runner_forward(
 ) -> i32 {
     let runner = unsafe { RUNNER.as_mut() }.expect("runner not initialized");
     let h = runner.forward(token_id as usize, pos as usize, seq_len as usize);
+    unsafe { std::ptr::copy_nonoverlapping(h.as_ptr(), h_out, HDIM); }
+    HDIM as i32
+}
+
+/// Forward pass through only the first N layers. Returns hidden state after N layers.
+#[no_mangle]
+pub extern "C" fn lko_runner_forward_n(
+    token_id: i32, pos: i32, seq_len: i32, n_layers: i32,
+    h_out: *mut f32,
+) -> i32 {
+    let runner = unsafe { RUNNER.as_mut() }.expect("runner not initialized");
+    let mut h = {
+        let ptr = unsafe { runner.embed.as_ptr().add(token_id as usize * HDIM * 4) as *const f32 };
+        (0..HDIM).map(|i| unsafe { *ptr.add(i) }).collect::<Vec<f32>>()
+    };
+    let n = n_layers.min(40) as usize;
+    for l in 0..n {
+        let policy = runner.policy_table[l];
+        let lw = &runner.layers[l];
+        if !lw.input_norm.is_empty() {
+            h = rms_norm(&h, &lw.input_norm);
+        }
+        let ao = match policy.attn {
+            AttnPolicy::Full => {
+                if policy.is_steering {
+                    if runner.metal_gqa_ok {
+                        if let Some(ao) = gqa_metal_try(
+                            &lw.w_qkv, &lw.w_o, &h,
+                            pos as u32, seq_len as u32, runner.max_seq as u32,
+                            &mut runner.kv_k[l], &mut runner.kv_v[l],
+                            &mut runner.metal_gqa_first_fail,
+                        ) { ao } else {
+                            let mut ao = vec![0.0f32; HDIM];
+                            gqa_attention_fused(
+                                &lw.w_qkv, &lw.w_o, &h,
+                                &mut runner.kv_k[l], &mut runner.kv_v[l],
+                                &runner.rope_cos, &runner.rope_sin,
+                                16, 2, HEAD_DIM, pos as usize, seq_len as usize, runner.max_seq,
+                                &mut ao, &mut runner.scratch_qkv, &mut runner.scratch_q,
+                                &mut runner.scratch_k, &mut runner.scratch_v,
+                                &mut runner.scratch_attn_out,
+                                &mut runner.scratch_scores, &mut runner.scratch_attn,
+                            );
+                            ao
+                        }
+                    } else {
+                        let mut ao = vec![0.0f32; HDIM];
+                        gqa_attention_fused(
+                            &lw.w_qkv, &lw.w_o, &h,
+                            &mut runner.kv_k[l], &mut runner.kv_v[l],
+                            &runner.rope_cos, &runner.rope_sin,
+                            16, 2, HEAD_DIM, pos as usize, seq_len as usize, runner.max_seq,
+                            &mut ao, &mut runner.scratch_qkv, &mut runner.scratch_q,
+                            &mut runner.scratch_k, &mut runner.scratch_v,
+                            &mut runner.scratch_attn_out,
+                            &mut runner.scratch_scores, &mut runner.scratch_attn,
+                        );
+                        ao
+                    }
+                } else {
+                    let mut ao = vec![0.0f32; HDIM];
+                    delta_net_fused(
+                        &lw.w_qkv, &lw.w_z, &lw.w_b, &lw.w_a,
+                        &lw.w_o, &lw.w_conv, &lw.w_norm,
+                        &lw.dt_bias, &lw.a_log,
+                        &h,
+                        &mut runner.conv_states[l], &mut runner.conv_ptrs[l],
+                        &mut runner.S_states[l],
+                        &mut ao,
+                        &mut runner.scratch_f32,
+                    );
+                    ao
+                }
+            }
+            AttnPolicy::Collapse | AttnPolicy::Skip => { vec![0.0f32; HDIM] }
+        };
+        for i in 0..HDIM { h[i] += ao[i]; }
+        if !lw.post_norm.is_empty() {
+            h = rms_norm(&h, &lw.post_norm);
+        }
+        if policy.moe != MoEPolicy::Skip && !lw.se_gate.is_empty() {
+            let gate = gemv_f16(&lw.se_gate, &h, 512, HDIM);
+            let up = gemv_f16(&lw.se_up, &h, 512, HDIM);
+            let mut hidden = gate.clone();
+            for i in 0..512 { hidden[i] = hidden[i] / (1.0 + (-hidden[i]).exp()) * up[i]; }
+            let se_out = gemv_f16(&lw.se_down, &hidden, HDIM, 512);
+            let se_gate = 1.0 / (1.0 + (-dot_f32(&lw.se_gate_w, &h)).exp());
+            for i in 0..HDIM { h[i] += se_out[i] * se_gate; }
+        }
+        if policy.moe != MoEPolicy::Skip {
+            let moe_out = runner.call_moe(&h, l);
+            for i in 0..HDIM { h[i] += moe_out[i]; }
+        }
+    }
     unsafe { std::ptr::copy_nonoverlapping(h.as_ptr(), h_out, HDIM); }
     HDIM as i32
 }
@@ -1178,7 +1685,7 @@ pub extern "C" fn lko_runner_step(
     values_out: *mut f32,
 ) -> i32 {
     let runner = unsafe { RUNNER.as_mut() }.expect("runner not initialized");
-    let h = runner.forward(token_id as usize, pos as usize, seq_len as usize);
+    let (h, timing) = runner.forward_timed(token_id as usize, pos as usize, seq_len as usize);
 
     // RMSNorm
     let hn = rms_norm(&h, &runner.final_norm);

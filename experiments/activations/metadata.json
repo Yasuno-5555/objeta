@@ -1,0 +1,16 @@
+{
+  "model": "TinyLlama-1.1B-Chat-v1.0",
+  "n_layers": 22,
+  "hidden_dim": 2048,
+  "ffn_dim": 5632,
+  "n_prompts": 5,
+  "prompts": [
+    "The meaning of life is",
+    "Quantum mechanics describes",
+    "The capital of France is",
+    "Machine learning is a field of",
+    "The history of the Roman Empire"
+  ],
+  "total_samples": 100,
+  "collection_time_s": 451.90462008400937
+}

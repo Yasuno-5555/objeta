@@ -1,0 +1,22 @@
+[package]
+name = "objeta-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "objeta"
+path = "src/main.rs"
+
+[dependencies]
+objeta-core.workspace = true
+objeta-parser.workspace = true
+objeta-analysis.workspace = true
+objeta-phase.workspace = true
+objeta-runtime = { path = "../objeta-runtime" }
+objeta-moe = { path = "../objeta-moe" }
+objeta-quantize = { path = "../objeta-quantize" }
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

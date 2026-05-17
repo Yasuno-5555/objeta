@@ -1,0 +1,154 @@
+{
+  "experiment": "exp2_unfold_sensitivity_direct",
+  "model": "TinyLlama-1.1B-Chat-v1.0",
+  "n_layers": 22,
+  "results": {
+    "A_all_q4": {
+      "avg_bits": 4.0,
+      "fp16_layers": [],
+      "ppl": 7.540980514693428,
+      "repetition": 0.011111111111111112,
+      "repetition_std": 0.01571348402636772,
+      "diversity": 0.7666666666666666,
+      "bsl_mean": 4.0,
+      "bsl_min": 2.0,
+      "bsl_values": [
+        3,
+        7,
+        2
+      ],
+      "generated_sample": "The capital of France is Paris, a city known for its iconic architecture, food, and fashion.\n- Taste the famous French pastries, croissants, and macarons.\n"
+    },
+    "B_L2_fp16": {
+      "avg_bits": 4.545454545454546,
+      "fp16_layers": [
+        2
+      ],
+      "ppl": 6.990453840604402,
+      "repetition": 0.0,
+      "repetition_std": 0.0,
+      "diversity": 0.7555555555555555,
+      "bsl_mean": 1.6666666666666667,
+      "bsl_min": 0.0,
+      "bsl_values": [
+        3,
+        0,
+        2
+      ],
+      "generated_sample": "The capital of France is Paris, a city known for its rich history, culture, and art."
+    },
+    "C_L0_fp16": {
+      "avg_bits": 4.545454545454546,
+      "fp16_layers": [
+        0
+      ],
+      "ppl": 7.554810073784446,
+      "repetition": 0.0,
+      "repetition_std": 0.0,
+      "diversity": 0.7777777777777778,
+      "bsl_mean": 4.0,
+      "bsl_min": 2.0,
+      "bsl_values": [
+        3,
+        7,
+        2
+      ],
+      "generated_sample": "The capital of France is Paris, a city known for its art, culture, and history. The city is home to many famous museums, including the Louvre and the Mus\u00e9e d'Orsay"
+    },
+    "D_L1_fp16": {
+      "avg_bits": 4.545454545454546,
+      "fp16_layers": [
+        1
+      ],
+      "ppl": 6.9689827967640445,
+      "repetition": 0.0,
+      "repetition_std": 0.0,
+      "diversity": 0.7666666666666667,
+      "bsl_mean": 4.0,
+      "bsl_min": 2.0,
+      "bsl_values": [
+        3,
+        7,
+        2
+      ],
+      "generated_sample": "The capital of France is Paris, a city known for its art, fashion, and cuisine. 2. The city of London is known for its thriving arts scene, its vibr"
+    },
+    "E_L3_fp16": {
+      "avg_bits": 4.545454545454546,
+      "fp16_layers": [
+        3
+      ],
+      "ppl": 7.40597385112601,
+      "repetition": 0.0,
+      "repetition_std": 0.0,
+      "diversity": 0.7999999999999999,
+      "bsl_mean": 4.0,
+      "bsl_min": 2.0,
+      "bsl_values": [
+        3,
+        7,
+        2
+      ],
+      "generated_sample": "The capital of France is Paris, a city known for its rich culture, cuisine, and fashion. The city is a hub for tourism, commerce, and transportation. Paris has become an"
+    },
+    "F_L0L2_fp16": {
+      "avg_bits": 5.636363636363637,
+      "fp16_layers": [
+        0,
+        1,
+        2
+      ],
+      "ppl": 6.672213422729613,
+      "repetition": 0.0,
+      "repetition_std": 0.0,
+      "diversity": 0.8602339181286549,
+      "bsl_mean": 2.0,
+      "bsl_min": 0.0,
+      "bsl_values": [
+        3,
+        0,
+        3
+      ],
+      "generated_sample": "The capital of France is Paris, a city known for its romantic atmosphere, world-class museums, and the Eiffel Tower."
+    },
+    "G_all_fp16": {
+      "avg_bits": 16.0,
+      "fp16_layers": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21
+      ],
+      "ppl": 5.94434975839048,
+      "repetition": 0.0,
+      "repetition_std": 0.0,
+      "diversity": 0.7777777777777778,
+      "bsl_mean": 30.0,
+      "bsl_min": 30.0,
+      "bsl_values": [
+        30,
+        30,
+        30
+      ],
+      "generated_sample": "The capital of France is Paris, a city known for its beauty, culture, and history. Paris is a hub for art, fashion, and cuisine, and is home to many famous landmarks"
+    }
+  }
+}

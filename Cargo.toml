@@ -1,0 +1,42 @@
+[workspace]
+members = [
+    "crates/objeta-core",
+    "crates/objeta-parser",
+    "crates/objeta-analysis",
+    "crates/objeta-phase",
+    "crates/objeta-routing",
+    "crates/objeta-runtime",
+    "crates/objeta-metal",
+    "crates/objeta-ssd",
+    "crates/objeta-qwen36-executor",
+    "crates/objeta-moe",
+    "crates/objeta-quantize",
+    "crates/objeta-cli",
+    "experiments",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+# Internal crates
+objeta-core = { path = "crates/objeta-core" }
+objeta-parser = { path = "crates/objeta-parser" }
+objeta-analysis = { path = "crates/objeta-analysis" }
+objeta-phase = { path = "crates/objeta-phase" }
+
+# External dependencies
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+memmap2 = "0.9"
+rayon = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive"] }
+thiserror = "2"
+nalgebra = "0.33"
+rand = "0.8"
+rand_distr = "0.4"

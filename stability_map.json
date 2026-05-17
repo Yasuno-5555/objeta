@@ -1,0 +1,206 @@
+{
+  "model": "llama",
+  "phase": "Split2D",
+  "family": "ResidualTransport",
+  "n_layers": 22,
+  "layers": [
+    {
+      "layer": 0,
+      "zone": "Sync",
+      "precision_bits": 4,
+      "full_attention": false,
+      "is_refresh": false,
+      "inversion": false,
+      "lyapunov": 0.6562419193400892
+    },
+    {
+      "layer": 1,
+      "zone": "Sync",
+      "precision_bits": 4,
+      "full_attention": false,
+      "is_refresh": false,
+      "inversion": false,
+      "lyapunov": 1.1761009679747239
+    },
+    {
+      "layer": 2,
+      "zone": "Unfold",
+      "precision_bits": 16,
+      "full_attention": true,
+      "is_refresh": false,
+      "inversion": false,
+      "lyapunov": 0.8815189210764866
+    },
+    {
+      "layer": 3,
+      "zone": "IsometricLocal",
+      "precision_bits": 5,
+      "full_attention": false,
+      "is_refresh": true,
+      "inversion": false,
+      "lyapunov": 0.9712759145061941
+    },
+    {
+      "layer": 4,
+      "zone": "IsometricLocal",
+      "precision_bits": 5,
+      "full_attention": false,
+      "is_refresh": false,
+      "inversion": false,
+      "lyapunov": 1.0533103040341396
+    },
+    {
+      "layer": 5,
+      "zone": "IsometricLocal",
+      "precision_bits": 5,
+      "full_attention": false,
+      "is_refresh": false,
+      "inversion": false,
+      "lyapunov": 0.9934590464985538
+    },
+    {
+      "layer": 6,
+      "zone": "IsometricLocal",
+      "precision_bits": 5,
+      "full_attention": false,
+      "is_refresh": false,
+      "inversion": false,
+      "lyapunov": 1.0340769397305123
+    },
+    {
+      "layer": 7,
+      "zone": "IsometricLocal",
+      "precision_bits": 5,
+      "full_attention": false,
+      "is_refresh": false,
+      "inversion": false,
+      "lyapunov": 1.0296677339533844
+    },
+    {
+      "layer": 8,
+      "zone": "IsometricLocal",
+      "precision_bits": 5,
+      "full_attention": false,
+      "is_refresh": true,
+      "inversion": false,
+      "lyapunov": 0.9914963166649468
+    },
+    {
+      "layer": 9,
+      "zone": "IsometricLocal",
+      "precision_bits": 5,
+      "full_attention": false,
+      "is_refresh": false,
+      "inversion": false,
+      "lyapunov": 1.0244212907796972
+    },
+    {
+      "layer": 10,
+      "zone": "IsometricLocal",
+      "precision_bits": 5,
+      "full_attention": false,
+      "is_refresh": false,
+      "inversion": false,
+      "lyapunov": 1.006677978175847
+    },
+    {
+      "layer": 11,
+      "zone": "IsometricLocal",
+      "precision_bits": 5,
+      "full_attention": false,
+      "is_refresh": false,
+      "inversion": false,
+      "lyapunov": 1.03266224329202
+    },
+    {
+      "layer": 12,
+      "zone": "IsometricLocal",
+      "precision_bits": 5,
+      "full_attention": false,
+      "is_refresh": false,
+      "inversion": false,
+      "lyapunov": 1.0184796210175107
+    },
+    {
+      "layer": 13,
+      "zone": "IsometricLocal",
+      "precision_bits": 5,
+      "full_attention": false,
+      "is_refresh": false,
+      "inversion": false,
+      "lyapunov": 1.0187215895719506
+    },
+    {
+      "layer": 14,
+      "zone": "IsometricLocal",
+      "precision_bits": 5,
+      "full_attention": false,
+      "is_refresh": false,
+      "inversion": false,
+      "lyapunov": 1.0357344225474843
+    },
+    {
+      "layer": 15,
+      "zone": "IsometricLocal",
+      "precision_bits": 5,
+      "full_attention": false,
+      "is_refresh": false,
+      "inversion": false,
+      "lyapunov": 0.982251646625976
+    },
+    {
+      "layer": 16,
+      "zone": "Divergent",
+      "precision_bits": 8,
+      "full_attention": true,
+      "is_refresh": false,
+      "inversion": false,
+      "lyapunov": 1.0172009211885213
+    },
+    {
+      "layer": 17,
+      "zone": "Divergent",
+      "precision_bits": 8,
+      "full_attention": true,
+      "is_refresh": false,
+      "inversion": false,
+      "lyapunov": 1.0474377867937175
+    },
+    {
+      "layer": 18,
+      "zone": "Divergent",
+      "precision_bits": 8,
+      "full_attention": true,
+      "is_refresh": false,
+      "inversion": false,
+      "lyapunov": 1.0373676762913835
+    },
+    {
+      "layer": 19,
+      "zone": "Divergent",
+      "precision_bits": 8,
+      "full_attention": true,
+      "is_refresh": false,
+      "inversion": false,
+      "lyapunov": 1.0273055667327602
+    },
+    {
+      "layer": 20,
+      "zone": "Divergent",
+      "precision_bits": 8,
+      "full_attention": true,
+      "is_refresh": false,
+      "inversion": true,
+      "lyapunov": 1.8553969737687972
+    },
+    {
+      "layer": 21,
+      "zone": "Divergent",
+      "precision_bits": 8,
+      "full_attention": true,
+      "is_refresh": false,
+      "inversion": false,
+      "lyapunov": 0.025531369803440965
+    }
+  ]
+}

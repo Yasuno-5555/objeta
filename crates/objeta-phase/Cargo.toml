@@ -1,0 +1,8 @@
+[package]
+name = "objeta-phase"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+objeta-core.workspace = true
+serde.workspace = true

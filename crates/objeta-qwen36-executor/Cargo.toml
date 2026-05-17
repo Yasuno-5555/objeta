@@ -1,0 +1,20 @@
+[package]
+name = "objeta-qwen36-executor"
+version = "0.1.0"
+edition = "2021"
+description = "Qwen3.6 MoE executor — Rust SIMD dequantize + parallel dispatch"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+memmap2 = "0.9"
+rayon = "1.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[build-dependencies]
+cc = "1"
+
+[dev-dependencies]
+tempfile = "3"

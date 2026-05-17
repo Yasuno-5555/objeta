@@ -1,0 +1,16 @@
+[package]
+name = "objeta-analysis"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+objeta-core.workspace = true
+objeta-parser.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rayon.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+nalgebra.workspace = true
+rand = "0.8"
+rand_distr = "0.4"

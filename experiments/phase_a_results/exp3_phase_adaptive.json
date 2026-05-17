@@ -1,0 +1,73 @@
+{
+  "experiment": "exp3_phase_adaptive",
+  "model": "TinyLlama-1.1B-Chat-v1.0",
+  "oracle_ppl": 5.94434975839048,
+  "all_q4_ppl": 7.540980514693428,
+  "gap": 1.5966307563029476,
+  "results": {
+    "A_all_q4": {
+      "avg_bits": 4.0,
+      "ppl": 7.540980514693428,
+      "mean_entropy": 1.3235677083333333,
+      "mean_repetition": 0.0,
+      "mean_diversity": 0.7215873015873017,
+      "sample": "The capital of France is Paris, a city known for its history, art, and fashion. What are some of the best fashion destinations in France?"
+    },
+    "B_all_q3": {
+      "avg_bits": 3.0,
+      "ppl": 572.6714080988627,
+      "mean_entropy": 6.458333333333333,
+      "mean_repetition": 0.18666666666666668,
+      "mean_diversity": 0.30333333333333334,
+      "sample": "The capital of France is Paris, a city known for the chemical of the other of the substance of the nature of the chemical of the subst..."
+    },
+    "C_phase_adaptive": {
+      "avg_bits": 5.136363636363637,
+      "ppl": 8.531338918217998,
+      "mean_entropy": 2.3177083333333335,
+      "mean_repetition": 0.0,
+      "mean_diversity": 0.6861111111111112,
+      "sample": "The capital of France is Paris, a city known for its charming street-food scene, and it is a must-visit for any food lover."
+    },
+    "D_L0L2_fp16_rest_q4": {
+      "avg_bits": 5.636363636363637,
+      "ppl": 6.672213422729613,
+      "mean_entropy": 1.3294270833333333,
+      "mean_repetition": 0.0,
+      "mean_diversity": 0.7066666666666667,
+      "sample": "The capital of France is Paris, a city known for its rich history, art, and culture."
+    },
+    "E_all_fp16": {
+      "avg_bits": 16.0,
+      "ppl": 5.94434975839048,
+      "mean_entropy": 1.1865234375,
+      "mean_repetition": 0.02,
+      "mean_diversity": 0.7533333333333334,
+      "sample": "The capital of France is Paris, a city known for its beautiful architecture, art, and culture. Paris is also home to the Eiffel Tower, Notre-Dame Cathedral, and the Louvre Museum.\n\n2. London, England The city of London is famous for its historic buildings"
+    },
+    "F_early_fp16_late_q2": {
+      "avg_bits": 3.909090909090909,
+      "ppl": 37722.84936257144,
+      "mean_entropy": 8.229166666666666,
+      "mean_repetition": 0.17333333333333334,
+      "mean_diversity": 0.47333333333333333,
+      "sample": "The capital of France is Paris, a city known forrettorettoretto\ufffd\ufffd\u014c\u00abretto\u00abrettolais`](\u014c`](/>fern\u00ab\"`retto`](\"` Enlaces\ufffdfern`](`](\"`}](ocker\u00fcsseldessionalessionalLongrightarrow){\\=`\u00fcsseld))` konn konn XIXe\u00fcsseldessionalessionalockergrundfernaloLongrightarrowLongrightarrowbourne"
+    },
+    "G_q4floor_div_q5": {
+      "avg_bits": 6.0,
+      "ppl": 6.261608347531704,
+      "mean_entropy": 1.2220052083333333,
+      "mean_repetition": 0.0,
+      "mean_diversity": 0.7810256410256411,
+      "sample": "The capital of France is Paris, a city known for its art, fashion, and gastronomy. What is the reason behind the popularity of these industries in Paris?"
+    },
+    "H_q4floor_div_q6": {
+      "avg_bits": 6.363636363636363,
+      "ppl": 6.179749164480834,
+      "mean_entropy": 1.2578125,
+      "mean_repetition": 0.013333333333333334,
+      "mean_diversity": 0.7533333333333334,
+      "sample": "The capital of France is Paris, a city known for its beautiful architecture, culture, and cuisine. Here are some of the most beautiful buildings in Paris:\n\n1. Eiffel Tower: This iconic structure, which stands at 324 meters tall, is one of the"
+    }
+  }
+}

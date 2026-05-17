@@ -1,0 +1,56 @@
+{
+  "baseline_text": "to find your gift. The purpose of life is to give it away.\n\n2. The Power of Now by Eckhart Tolle\n",
+  "baseline_entropy_mean": 1.8213857028012475,
+  "results": {
+    "64": {
+      "token_agreement": 0.16666666666666666,
+      "exact_match": false,
+      "entropy_diff_mean": 1.4721500781054297,
+      "entropy_drift": 1.3837974071502686,
+      "hidden_cos_mean": 0.17093394298783757,
+      "hidden_cos_min": -0.07654409855604172,
+      "rep_rate_rot": 0.8285714285714286,
+      "rep_rate_baseline": 0.02857142857142857
+    },
+    "96": {
+      "token_agreement": 0.16666666666666666,
+      "exact_match": false,
+      "entropy_diff_mean": 1.424106302546958,
+      "entropy_drift": 1.6342934966087341,
+      "hidden_cos_mean": 0.18140891566872597,
+      "hidden_cos_min": -0.07607778906822205,
+      "rep_rate_rot": 0.8285714285714286,
+      "rep_rate_baseline": 0.02857142857142857
+    },
+    "128": {
+      "token_agreement": 0.16666666666666666,
+      "exact_match": false,
+      "entropy_diff_mean": 1.5704241431628665,
+      "entropy_drift": 2.0750990509986877,
+      "hidden_cos_mean": 0.18364986792122098,
+      "hidden_cos_min": -0.06070023402571678,
+      "rep_rate_rot": 0.8285714285714286,
+      "rep_rate_baseline": 0.02857142857142857
+    },
+    "160": {
+      "token_agreement": 0.16666666666666666,
+      "exact_match": false,
+      "entropy_diff_mean": 1.5134397285059094,
+      "entropy_drift": 2.001558542251587,
+      "hidden_cos_mean": 0.17966613888909871,
+      "hidden_cos_min": -0.07681158930063248,
+      "rep_rate_rot": 0.8285714285714286,
+      "rep_rate_baseline": 0.02857142857142857
+    },
+    "192": {
+      "token_agreement": 0.16666666666666666,
+      "exact_match": false,
+      "entropy_diff_mean": 1.477053878394266,
+      "entropy_drift": 1.8202884197235107,
+      "hidden_cos_mean": 0.17647128602997822,
+      "hidden_cos_min": -0.08916082978248596,
+      "rep_rate_rot": 0.8285714285714286,
+      "rep_rate_baseline": 0.02857142857142857
+    }
+  }
+}

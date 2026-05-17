@@ -1,0 +1,34 @@
+{
+  "experiment": "cross_family_qwen25",
+  "model": "Qwen2.5-0.5B",
+  "family": "Family B (Spherical Steering)",
+  "n_layers": 24,
+  "hidden_dim": 896,
+  "ref_ppl": 5.873521561883273,
+  "precision_sweep": {
+    "q3.00": 7011.793639013059,
+    "q3.25": 123.2824516785288,
+    "q3.50": 89.88432357614076,
+    "q4.00": 14.893151265154376,
+    "q5.00": 9.550698804355388
+  },
+  "attention_backbone": {
+    "Backbone: Attn5+FFN3": 253.27079380819612,
+    "Backbone: Attn5+FFN3.5": 39.316080036288,
+    "Inverse:  Attn3+FFN5": 26.667782710798868,
+    "Inverse:  Attn3.5+FFN5": 12.099400705314437,
+    "Uniform q4": 14.893151265154376,
+    "Uniform q5": 9.550698804355388
+  },
+  "tinyllama_reference": {
+    "q3.00": 949.68,
+    "q3.25": 41.99,
+    "q3.50": 7.13,
+    "q4.00": 5.83,
+    "q5.00": 4.34,
+    "FFN3_Attn5": 14.4,
+    "FFN5_Attn3": 127.6,
+    "family": "Family A (Residual Transport)",
+    "ref_ppl": 4.09
+  }
+}

@@ -1,0 +1,13 @@
+[package]
+name = "objeta-moe"
+version.workspace = true
+edition.workspace = true
+description = "MoE Routing Compiler — Qwen3.6 expert analysis in Rust"
+
+[dependencies]
+objeta-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rayon.workspace = true
+rand.workspace = true
+rand_distr.workspace = true

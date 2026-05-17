@@ -1,0 +1,13 @@
+{
+  "experiment": "exp1_head_to_head",
+  "model": "TinyLlama-1.1B-Chat-v1.0",
+  "oracle_ppl": 5.94434975839048,
+  "all_q4_ppl": 7.540980514693428,
+  "gap": 1.5966307563029476,
+  "hessian_protected": [
+    2,
+    1,
+    0
+  ],
+  "random_protected": [
+    

@@ -1,0 +1,236 @@
+{
+  "model_name": "llama",
+  "phase": "Split2D",
+  "family": "ResidualTransport",
+  "n_layers": 22,
+  "hidden_dim": 2048,
+  "average_bits": 3.797619047619048,
+  "total_bytes": 533463040,
+  "fp16_bytes": 88080384,
+  "compression_ratio": 0.1651105651105651,
+  "ffn_weight_fraction": 0.7857142857142857,
+  "attn_qo_weight_fraction": 0.19047619047619047,
+  "attn_kv_weight_fraction": 0.023809523809523808,
+  "layers": [
+    {
+      "layer_idx": 0,
+      "zone": "Sync",
+      "ffn_bits": 3,
+      "attn_qo_bits": 5,
+      "attn_kv_bits": 4,
+      "ffn_format": "q3_k_appl",
+      "attn_qo_format": "q5_k_appl",
+      "attn_kv_format": "q4_k_appl"
+    },
+    {
+      "layer_idx": 1,
+      "zone": "Sync",
+      "ffn_bits": 3,
+      "attn_qo_bits": 5,
+      "attn_kv_bits": 4,
+      "ffn_format": "q3_k_appl",
+      "attn_qo_format": "q5_k_appl",
+      "attn_kv_format": "q4_k_appl"
+    },
+    {
+      "layer_idx": 2,
+      "zone": "Unfold",
+      "ffn_bits": 3,
+      "attn_qo_bits": 5,
+      "attn_kv_bits": 4,
+      "ffn_format": "q3_k_appl",
+      "attn_qo_format": "q5_k_appl",
+      "attn_kv_format": "q4_k_appl"
+    },
+    {
+      "layer_idx": 3,
+      "zone": "IsometricLocal",
+      "ffn_bits": 3,
+      "attn_qo_bits": 5,
+      "attn_kv_bits": 4,
+      "ffn_format": "q3_k_appl",
+      "attn_qo_format": "q5_k_appl",
+      "attn_kv_format": "q4_k_appl"
+    },
+    {
+      "layer_idx": 4,
+      "zone": "IsometricLocal",
+      "ffn_bits": 3,
+      "attn_qo_bits": 5,
+      "attn_kv_bits": 4,
+      "ffn_format": "q3_k_appl",
+      "attn_qo_format": "q5_k_appl",
+      "attn_kv_format": "q4_k_appl"
+    },
+    {
+      "layer_idx": 5,
+      "zone": "IsometricLocal",
+      "ffn_bits": 3,
+      "attn_qo_bits": 5,
+      "attn_kv_bits": 4,
+      "ffn_format": "q3_k_appl",
+      "attn_qo_format": "q5_k_appl",
+      "attn_kv_format": "q4_k_appl"
+    },
+    {
+      "layer_idx": 6,
+      "zone": "IsometricLocal",
+      "ffn_bits": 3,
+      "attn_qo_bits": 5,
+      "attn_kv_bits": 4,
+      "ffn_format": "q3_k_appl",
+      "attn_qo_format": "q5_k_appl",
+      "attn_kv_format": "q4_k_appl"
+    },
+    {
+      "layer_idx": 7,
+      "zone": "IsometricLocal",
+      "ffn_bits": 3,
+      "attn_qo_bits": 5,
+      "attn_kv_bits": 4,
+      "ffn_format": "q3_k_appl",
+      "attn_qo_format": "q5_k_appl",
+      "attn_kv_format": "q4_k_appl"
+    },
+    {
+      "layer_idx": 8,
+      "zone": "IsometricLocal",
+      "ffn_bits": 3,
+      "attn_qo_bits": 5,
+      "attn_kv_bits": 4,
+      "ffn_format": "q3_k_appl",
+      "attn_qo_format": "q5_k_appl",
+      "attn_kv_format": "q4_k_appl"
+    },
+    {
+      "layer_idx": 9,
+      "zone": "IsometricLocal",
+      "ffn_bits": 3,
+      "attn_qo_bits": 5,
+      "attn_kv_bits": 4,
+      "ffn_format": "q3_k_appl",
+      "attn_qo_format": "q5_k_appl",
+      "attn_kv_format": "q4_k_appl"
+    },
+    {
+      "layer_idx": 10,
+      "zone": "IsometricLocal",
+      "ffn_bits": 3,
+      "attn_qo_bits": 5,
+      "attn_kv_bits": 4,
+      "ffn_format": "q3_k_appl",
+      "attn_qo_format": "q5_k_appl",
+      "attn_kv_format": "q4_k_appl"
+    },
+    {
+      "layer_idx": 11,
+      "zone": "IsometricLocal",
+      "ffn_bits": 3,
+      "attn_qo_bits": 5,
+      "attn_kv_bits": 4,
+      "ffn_format": "q3_k_appl",
+      "attn_qo_format": "q5_k_appl",
+      "attn_kv_format": "q4_k_appl"
+    },
+    {
+      "layer_idx": 12,
+      "zone": "IsometricLocal",
+      "ffn_bits": 3,
+      "attn_qo_bits": 5,
+      "attn_kv_bits": 4,
+      "ffn_format": "q3_k_appl",
+      "attn_qo_format": "q5_k_appl",
+      "attn_kv_format": "q4_k_appl"
+    },
+    {
+      "layer_idx": 13,
+      "zone": "IsometricLocal",
+      "ffn_bits": 3,
+      "attn_qo_bits": 5,
+      "attn_kv_bits": 4,
+      "ffn_format": "q3_k_appl",
+      "attn_qo_format": "q5_k_appl",
+      "attn_kv_format": "q4_k_appl"
+    },
+    {
+      "layer_idx": 14,
+      "zone": "IsometricLocal",
+      "ffn_bits": 3,
+      "attn_qo_bits": 5,
+      "attn_kv_bits": 4,
+      "ffn_format": "q3_k_appl",
+      "attn_qo_format": "q5_k_appl",
+      "attn_kv_format": "q4_k_appl"
+    },
+    {
+      "layer_idx": 15,
+      "zone": "IsometricLocal",
+      "ffn_bits": 3,
+      "attn_qo_bits": 5,
+      "attn_kv_bits": 4,
+      "ffn_format": "q3_k_appl",
+      "attn_qo_format": "q5_k_appl",
+      "attn_kv_format": "q4_k_appl"
+    },
+    {
+      "layer_idx": 16,
+      "zone": "Divergent",
+      "ffn_bits": 3,
+      "attn_qo_bits": 5,
+      "attn_kv_bits": 4,
+      "ffn_format": "q3_k_appl",
+      "attn_qo_format": "q5_k_appl",
+      "attn_kv_format": "q4_k_appl"
+    },
+    {
+      "layer_idx": 17,
+      "zone": "Divergent",
+      "ffn_bits": 3,
+      "attn_qo_bits": 5,
+      "attn_kv_bits": 4,
+      "ffn_format": "q3_k_appl",
+      "attn_qo_format": "q5_k_appl",
+      "attn_kv_format": "q4_k_appl"
+    },
+    {
+      "layer_idx": 18,
+      "zone": "Divergent",
+      "ffn_bits": 3,
+      "attn_qo_bits": 5,
+      "attn_kv_bits": 4,
+      "ffn_format": "q3_k_appl",
+      "attn_qo_format": "q5_k_appl",
+      "attn_kv_format": "q4_k_appl"
+    },
+    {
+      "layer_idx": 19,
+      "zone": "Divergent",
+      "ffn_bits": 3,
+      "attn_qo_bits": 5,
+      "attn_kv_bits": 4,
+      "ffn_format": "q3_k_appl",
+      "attn_qo_format": "q5_k_appl",
+      "attn_kv_format": "q4_k_appl"
+    },
+    {
+      "layer_idx": 20,
+      "zone": "Divergent",
+      "ffn_bits": 3,
+      "attn_qo_bits": 5,
+      "attn_kv_bits": 4,
+      "ffn_format": "q3_k_appl",
+      "attn_qo_format": "q5_k_appl",
+      "attn_kv_format": "q4_k_appl"
+    },
+    {
+      "layer_idx": 21,
+      "zone": "Divergent",
+      "ffn_bits": 3,
+      "attn_qo_bits": 5,
+      "attn_kv_bits": 4,
+      "ffn_format": "q3_k_appl",
+      "attn_qo_format": "q5_k_appl",
+      "attn_kv_format": "q4_k_appl"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+[package]
+name = "objeta-quantize"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Phase-adaptive quantization — Lyapunov-aware per-layer bit allocation"
+
+[dependencies]
+objeta-core.workspace = true
+objeta-routing = { path = "../objeta-routing" }
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+rayon.workspace = true

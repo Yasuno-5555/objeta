@@ -11,6 +11,7 @@ members = [
     "crates/objeta-qwen36-executor",
     "crates/objeta-moe",
     "crates/objeta-quantize",
+    "crates/objeta-os",
     "crates/objeta-cli",
     "experiments",
 ]
@@ -27,6 +28,7 @@ objeta-core = { path = "crates/objeta-core" }
 objeta-parser = { path = "crates/objeta-parser" }
 objeta-analysis = { path = "crates/objeta-analysis" }
 objeta-phase = { path = "crates/objeta-phase" }
+objeta-os = { path = "crates/objeta-os" }
 
 # External dependencies
 serde = { version = "1", features = ["derive"] }

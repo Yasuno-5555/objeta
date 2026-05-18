@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Stability Phase Diagram</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0d1117;color:#c9d1d9;font:14px monospace;padding:16px}
+h1{color:#58a6ff;margin-bottom:8px}
+canvas{border:1px solid #30363d;border-radius:6px}
+.legend{display:flex;gap:12px;margin:8px 0;font-size:11px}
+.legend span{display:flex;align-items:center;gap:4px}
+.swatch{width:12px;height:12px;border-radius:2px}
+.panel{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:12px;margin-top:12px}
+.metric{display:flex;justify-content:space-between;padding:2px 0}
+.val{color:#58a6ff}
+</style></head><body>
+<h1>Stability Phase Diagram — λ × k</h1>
+<div class="legend">
+<span><span class="swatch" style="background:#3fb950"></span> Stable</span>
+<span><span class="swatch" style="background:#d29922"></span> Marginal</span>
+<span><span class="swatch" style="background:#f85149"></span> Thrashing</span>
+<span><span class="swatch" style="background:#8b949e"></span> Collapsed</span>
+</div>
+<canvas id="phase" width="700" height="500"></canvas>
+<div class="panel"><h2>Hovered Point</h2><div id="info">Move mouse over diagram</div></div>
+<div class="panel" id="optimal"></div>
+<script>
+const data = [{"lambda": 0.0, "k": 2, "fault_rate": 1.0, "working_set": 256, "ws_fits_ram": true, "avg_diversity": 1.0, "collapse_risk": 0.5, "mem_pressure": 0.672, "io_ms": 2.0, "compute_ms": 0.8, "total_ms": 2.8, "tok_per_s": 357.1, "utility": 0.056}, {"lambda": 0.0, "k": 3, "fault_rate": 1.0, "working_set": 256, "ws_fits_ram": true, "avg_diversity": 1.0, "collapse_risk": 0.667, "mem_pressure": 0.672, "io_ms": 3.0, "compute_ms": 1.2, "total_ms": 4.2, "tok_per_s": 238.1, "utility": -0.198}, {"lambda": 0.0, "k": 4, "fault_rate": 1.0, "working_set": 256, "ws_fits_ram": true, "avg_diversity": 1.0, "collapse_risk": 0.75, "mem_pressure": 0.672, "io_ms": 4.0, "compute_ms": 1.6, "total_ms": 5.6, "tok_per_s": 178.6, "utility": -0.336}, {"lambda": 0.0, "k": 5, "fault_rate": 1.0, "working_set": 256, "ws_fits_ram": true, "avg_diversity": 1.0, "collapse_risk": 0.8, "mem_pressure": 0.672, "io_ms": 5.0, "compute_ms": 2.0, "total_ms": 7.0, "tok_per_s": 142.9, "utility": -0.427}, {"lambda": 0.0, "k": 6, "fault_rate": 1.0, "working_set": 256, "ws_fits_ram": true, "avg_diversity": 1.0, "collapse_risk": 0.833, "mem_pressure": 0.672, "io_ms": 6.0, "compute_ms": 2.4, "total_ms": 8.4, "tok_per_s": 119.0, "utility": -0.494}, {"lambda": 0.0, "k": 7, "fault_rate": 1.0, "working_set": 256, "ws_fits_ram": true, "avg_diversity": 1.0, "collapse_risk": 0.857, "mem_pressure": 0.672, "io_ms": 7.0, "compute_ms": 2.8, "total_ms": 9.8, "tok_per_s": 102.0, "utility": -0.549}, {"lambda": 0.0, "k": 8, "fault_rate": 1.0, "working_set": 256, "ws_fits_ram": true, "avg_diversity": 1.0, "collapse_risk": 0.875, "mem_pressure": 0.672, "io_ms": 8.0, "compute_ms": 3.2, "total_ms": 11.2, "tok_per_s": 89.3, "utility": -0.595}, {"lambda": 0.5, "k": 2, "fault_rate": 0.5, "working_set": 128, "ws_fits_ram": true, "avg_diversity": 1.6, "collapse_risk": 0.185, "mem_pressure": 0.336, "io_ms": 1.6, "compute_ms": 0.8, "total_ms": 2.4, "tok_per_s": 416.7, "utility": 0.604}, {"lambda": 0.5, "k": 3, "fault_rate": 0.775, "working_set": 128, "ws_fits_ram": true, "avg_diversity": 2.0, "collapse_risk": 0.332, "mem_pressure": 0.336, "io_ms": 2.4, "compute_ms": 1.2, "total_ms": 3.6, "tok_per_s": 277.8, "utility": 0.381}, {"lambda": 0.5, "k": 4, "fault_rate": 0.59, "working_set": 128, "ws_fits_ram": true, "avg_diversity": 2.3, "collapse_risk": 0.421, "mem_pressure": 0.336, "io_ms": 3.2, "compute_ms": 1.6, "total_ms": 4.8, "tok_per_s": 208.3, "utility": 0.237}, {"lambda": 0.5, "k": 5, "fault_rate": 0.82, "working_set": 128, "ws_fits_ram": true, "avg_diversity": 2.6, "collapse_risk": 0.48, "mem_pressure": 0.336, "io_ms": 4.0, "compute_ms": 2.0, "total_ms": 6.0, "tok_per_s": 166.7, "utility": 0.137}, {"lambda": 0.5, "k": 6, "fault_rate": 0.74, "working_set": 128, "ws_fits_ram": true, "avg_diversity": 3.0, "collapse_risk": 0.508, "mem_pressure": 0.336, "io_ms": 4.8, "compute_ms": 2.4, "total_ms": 7.2, "tok_per_s": 138.9, "utility": 0.081}, {"lambda": 0.5, "k": 7, "fault_rate": 0.83, "working_set": 128, "ws_fits_ram": true, "avg_diversity": 3.2, "collapse_risk": 0.537, "mem_pressure": 0.336, "io_ms": 5.6, "compute_ms": 2.8, "total_ms": 8.4, "tok_per_s": 119.0, "utility": 0.021}, {"lambda": 0.5, "k": 8, "fault_rate": 0.7, "working_set": 128, "ws_fits_ram": true, "avg_diversity": 3.7, "collapse_risk": 0.537, "mem_pressure": 0.336, "io_ms": 6.4, "compute_ms": 3.2, "total_ms": 9.6, "tok_per_s": 104.2, "utility": 0.004}, {"lambda": 1.0, "k": 2, "fault_rate": 0.26, "working_set": 85, "ws_fits_ram": true, "avg_diversity": 2.1, "collapse_risk": 0.0, "mem_pressure": 0.223, "io_ms": 1.4, "compute_ms": 0.8, "total_ms": 2.2, "tok_per_s": 454.5, "utility": 0.9}, {"lambda": 1.0, "k": 3, "fault_rate": 0.545, "working_set": 85, "ws_fits_ram": true, "avg_diversity": 2.4, "collapse_risk": 0.205, "mem_pressure": 0.223, "io_ms": 2.1, "compute_ms": 1.2, "total_ms": 3.3, "tok_per_s": 303.0, "utility": 0.597}, {"lambda": 1.0, "k": 4, "fault_rate": 0.41, "working_set": 85, "ws_fits_ram": true, "avg_diversity": 2.9, "collapse_risk": 0.272, "mem_pressure": 0.223, "io_ms": 2.8, "compute_ms": 1.6, "total_ms": 4.4, "tok_per_s": 227.3, "utility": 0.486}, {"lambda": 1.0, "k": 5, "fault_rate": 0.525, "working_set": 85, "ws_fits_ram": true, "avg_diversity": 3.5, "collapse_risk": 0.293, "mem_pressure": 0.223, "io_ms": 3.5, "compute_ms": 2.0, "total_ms": 5.5, "tok_per_s": 181.8, "utility": 0.44}, {"lambda": 1.0, "k": 6, "fault_rate": 0.415, "working_set": 85, "ws_fits_ram": true, "avg_diversity": 4.0, "collapse_risk": 0.338, "mem_pressure": 0.223, "io_ms": 4.2, "compute_ms": 2.4, "total_ms": 6.6, "tok_per_s": 151.5, "utility": 0.362}, {"lambda": 1.0, "k": 7, "fault_rate": 0.52, "working_set": 85, "ws_fits_ram": true, "avg_diversity": 4.5, "collapse_risk": 0.36, "mem_pressure": 0.223, "io_ms": 4.9, "compute_ms": 2.8, "total_ms": 7.7, "tok_per_s": 129.9, "utility": 0.314}, {"lambda": 1.0, "k": 8, "fault_rate": 0.435, "working_set": 85, "ws_fits_ram": true, "avg_diversity": 5.0, "collapse_risk": 0.381, "mem_pressure": 0.223, "io_ms": 5.6, "compute_ms": 3.2, "total_ms": 8.8, "tok_per_s": 113.6, "utility": 0.267}, {"lambda": 1.5, "k": 2, "fault_rate": 0.195, "working_set": 64, "ws_fits_ram": true, "avg_diversity": 2.2, "collapse_risk": 0.0, "mem_pressure": 0.168, "io_ms": 1.3, "compute_ms": 0.8, "total_ms": 2.1, "tok_per_s": 480.8, "utility": 0.918}, {"lambda": 1.5, "k": 3, "fault_rate": 0.41, "working_set": 64, "ws_fits_ram": true, "avg_diversity": 2.8, "collapse_risk": 0.082, "mem_pressure": 0.168, "io_ms": 1.9, "compute_ms": 1.2, "total_ms": 3.1, "tok_per_s": 320.5, "utility": 0.788}, {"lambda": 1.5, "k": 4, "fault_rate": 0.255, "working_set": 64, "ws_fits_ram": true, "avg_diversity": 3.3, "collapse_risk": 0.167, "mem_pressure": 0.168, "io_ms": 2.6, "compute_ms": 1.6, "total_ms": 4.2, "tok_per_s": 240.4, "utility": 0.653}, {"lambda": 1.5, "k": 5, "fault_rate": 0.365, "working_set": 64, "ws_fits_ram": true, "avg_diversity": 4.1, "collapse_risk": 0.184, "mem_pressure": 0.168, "io_ms": 3.2, "compute_ms": 2.0, "total_ms": 5.2, "tok_per_s": 192.3, "utility": 0.614}, {"lambda": 1.5, "k": 6, "fault_rate": 0.165, "working_set": 64, "ws_fits_ram": true, "avg_diversity": 4.7, "collapse_risk": 0.22, "mem_pressure": 0.168, "io_ms": 3.8, "compute_ms": 2.4, "total_ms": 6.2, "tok_per_s": 160.3, "utility": 0.548}, {"lambda": 1.5, "k": 7, "fault_rate": 0.295, "working_set": 64, "ws_fits_ram": true, "avg_diversity": 5.3, "collapse_risk": 0.236, "mem_pressure": 0.168, "io_ms": 4.5, "compute_ms": 2.8, "total_ms": 7.3, "tok_per_s": 137.4, "utility": 0.51}, {"lambda": 1.5, "k": 8, "fault_rate": 0.19, "working_set": 64, "ws_fits_ram": true, "avg_diversity": 5.9, "collapse_risk": 0.266, "mem_pressure": 0.168, "io_ms": 5.1, "compute_ms": 3.2, "total_ms": 8.3, "tok_per_s": 120.2, "utility": 0.453}, {"lambda": 2.0, "k": 2, "fault_rate": 0.13, "working_set": 51, "ws_fits_ram": true, "avg_diversity": 2.4, "collapse_risk": 0.0, "mem_pressure": 0.134, "io_ms": 1.2, "compute_ms": 0.8, "total_ms": 2.0, "tok_per_s": 500.0, "utility": 0.93}, {"lambda": 2.0, "k": 3, "fault_rate": 0.305, "working_set": 51, "ws_fits_ram": true, "avg_diversity": 3.0, "collapse_risk": 0.005, "mem_pressure": 0.134, "io_ms": 1.8, "compute_ms": 1.2, "total_ms": 3.0, "tok_per_s": 333.3, "utility": 0.908}, {"lambda": 2.0, "k": 4, "fault_rate": 0.195, "working_set": 51, "ws_fits_ram": true, "avg_diversity": 3.6, "collapse_risk": 0.099, "mem_pressure": 0.134, "io_ms": 2.4, "compute_ms": 1.6, "total_ms": 4.0, "tok_per_s": 250.0, "utility": 0.762}, {"lambda": 2.0, "k": 5, "fault_rate": 0.205, "working_set": 51, "ws_fits_ram": true, "avg_diversity": 4.5, "collapse_risk": 0.104, "mem_pressure": 0.134, "io_ms": 3.0, "compute_ms": 2.0, "total_ms": 5.0, "tok_per_s": 200.0, "utility": 0.739}, {"lambda": 2.0, "k": 6, "fault_rate": 0.135, "working_set": 51, "ws_fits_ram": true, "avg_diversity": 5.1, "collapse_risk": 0.155, "mem_pressure": 0.134, "io_ms": 3.6, "compute_ms": 2.4, "total_ms": 6.0, "tok_per_s": 166.7, "utility": 0.653}, {"lambda": 2.0, "k": 7, "fault_rate": 0.2, "working_set": 51, "ws_fits_ram": true, "avg_diversity": 5.7, "collapse_risk": 0.188, "mem_pressure": 0.134, "io_ms": 4.2, "compute_ms": 2.8, "total_ms": 7.0, "tok_per_s": 142.9, "utility": 0.592}, {"lambda": 2.0, "k": 8, "fault_rate": 0.105, "working_set": 51, "ws_fits_ram": true, "avg_diversity": 6.4, "collapse_risk": 0.205, "mem_pressure": 0.134, "io_ms": 4.8, "compute_ms": 3.2, "total_ms": 8.0, "tok_per_s": 125.0, "utility": 0.553}, {"lambda": 2.5, "k": 2, "fault_rate": 0.14, "working_set": 42, "ws_fits_ram": true, "avg_diversity": 2.4, "collapse_risk": 0.0, "mem_pressure": 0.11, "io_ms": 1.1, "compute_ms": 0.8, "total_ms": 1.9, "tok_per_s": 514.7, "utility": 0.938}, {"lambda": 2.5, "k": 3, "fault_rate": 0.235, "working_set": 42, "ws_fits_ram": true, "avg_diversity": 3.2, "collapse_risk": 0.0, "mem_pressure": 0.11, "io_ms": 1.7, "compute_ms": 1.2, "total_ms": 2.9, "tok_per_s": 343.1, "utility": 0.923}, {"lambda": 2.5, "k": 4, "fault_rate": 0.105, "working_set": 42, "ws_fits_ram": true, "avg_diversity": 4.0, "collapse_risk": 0.005, "mem_pressure": 0.11, "io_ms": 2.3, "compute_ms": 1.6, "total_ms": 3.9, "tok_per_s": 257.4, "utility": 0.902}, {"lambda": 2.5, "k": 5, "fault_rate": 0.175, "working_set": 42, "ws_fits_ram": true, "avg_diversity": 4.7, "collapse_risk": 0.067, "mem_pressure": 0.11, "io_ms": 2.9, "compute_ms": 2.0, "total_ms": 4.9, "tok_per_s": 205.9, "utility": 0.8}, {"lambda": 2.5, "k": 6, "fault_rate": 0.115, "working_set": 42, "ws_fits_ram": true, "avg_diversity": 5.3, "collapse_risk": 0.109, "mem_pressure": 0.11, "io_ms": 3.4, "compute_ms": 2.4, "total_ms": 5.8, "tok_per_s": 171.6, "utility": 0.727}, {"lambda": 2.5, "k": 7, "fault_rate": 0.175, "working_set": 42, "ws_fits_ram": true, "avg_diversity": 5.9, "collapse_risk": 0.158, "mem_pressure": 0.11, "io_ms": 4.0, "compute_ms": 2.8, "total_ms": 6.8, "tok_per_s": 147.1, "utility": 0.644}, {"lambda": 2.5, "k": 8, "fault_rate": 0.11, "working_set": 42, "ws_fits_ram": true, "avg_diversity": 6.7, "collapse_risk": 0.162, "mem_pressure": 0.11, "io_ms": 4.6, "compute_ms": 3.2, "total_ms": 7.8, "tok_per_s": 128.7, "utility": 0.624}, {"lambda": 3.0, "k": 2, "fault_rate": 0.105, "working_set": 36, "ws_fits_ram": true, "avg_diversity": 2.5, "collapse_risk": 0.0, "mem_pressure": 0.095, "io_ms": 1.1, "compute_ms": 0.8, "total_ms": 1.9, "tok_per_s": 526.3, "utility": 0.943}, {"lambda": 3.0, "k": 3, "fault_rate": 0.195, "working_set": 36, "ws_fits_ram": true, "avg_diversity": 3.3, "collapse_risk": 0.0, "mem_pressure": 0.095, "io_ms": 1.6, "compute_ms": 1.2, "total_ms": 2.9, "tok_per_s": 350.9, "utility": 0.929}, {"lambda": 3.0, "k": 4, "fault_rate": 0.07, "working_set": 36, "ws_fits_ram": true, "avg_diversity": 4.1, "collapse_risk": 0.0, "mem_pressure": 0.095, "io_ms": 2.2, "compute_ms": 1.6, "total_ms": 3.8, "tok_per_s": 263.2, "utility": 0.915}, {"lambda": 3.0, "k": 5, "fault_rate": 0.14, "working_set": 36, "ws_fits_ram": true, "avg_diversity": 4.8, "collapse_risk": 0.046, "mem_pressure": 0.095, "io_ms": 2.8, "compute_ms": 2.0, "total_ms": 4.8, "tok_per_s": 210.5, "utility": 0.836}, {"lambda": 3.0, "k": 6, "fault_rate": 0.095, "working_set": 36, "ws_fits_ram": true, "avg_diversity": 5.5, "collapse_risk": 0.079, "mem_pressure": 0.095, "io_ms": 3.3, "compute_ms": 2.4, "total_ms": 5.7, "tok_per_s": 175.4, "utility": 0.775}, {"lambda": 3.0, "k": 7, "fault_rate": 0.11, "working_set": 36, "ws_fits_ram": true, "avg_diversity": 6.4, "collapse_risk": 0.09, "mem_pressure": 0.095, "io_ms": 3.9, "compute_ms": 2.8, "total_ms": 6.7, "tok_per_s": 150.4, "utility": 0.746}, {"lambda": 3.0, "k": 8, "fault_rate": 0.075, "working_set": 36, "ws_fits_ram": true, "avg_diversity": 7.0, "collapse_risk": 0.119, "mem_pressure": 0.095, "io_ms": 4.4, "compute_ms": 3.2, "total_ms": 7.6, "tok_per_s": 131.6, "utility": 0.691}, {"lambda": 3.5, "k": 2, "fault_rate": 0.105, "working_set": 32, "ws_fits_ram": true, "avg_diversity": 2.5, "collapse_risk": 0.0, "mem_pressure": 0.084, "io_ms": 1.1, "compute_ms": 0.8, "total_ms": 1.9, "tok_per_s": 535.7, "utility": 0.947}, {"lambda": 3.5, "k": 3, "fault_rate": 0.175, "working_set": 32, "ws_fits_ram": true, "avg_diversity": 3.3, "collapse_risk": 0.0, "mem_pressure": 0.084, "io_ms": 1.6, "compute_ms": 1.2, "total_ms": 2.8, "tok_per_s": 357.1, "utility": 0.933}, {"lambda": 3.5, "k": 4, "fault_rate": 0.095, "working_set": 32, "ws_fits_ram": true, "avg_diversity": 4.1, "collapse_risk": 0.0, "mem_pressure": 0.084, "io_ms": 2.1, "compute_ms": 1.6, "total_ms": 3.7, "tok_per_s": 267.9, "utility": 0.919}, {"lambda": 3.5, "k": 5, "fault_rate": 0.115, "working_set": 32, "ws_fits_ram": true, "avg_diversity": 4.9, "collapse_risk": 0.017, "mem_pressure": 0.084, "io_ms": 2.7, "compute_ms": 2.0, "total_ms": 4.7, "tok_per_s": 214.3, "utility": 0.881}, {"lambda": 3.5, "k": 6, "fault_rate": 0.085, "working_set": 32, "ws_fits_ram": true, "avg_diversity": 5.6, "collapse_risk": 0.062, "mem_pressure": 0.084, "io_ms": 3.2, "compute_ms": 2.4, "total_ms": 5.6, "tok_per_s": 178.6, "utility": 0.803}, {"lambda": 3.5, "k": 7, "fault_rate": 0.07, "working_set": 32, "ws_fits_ram": true, "avg_diversity": 6.5, "collapse_risk": 0.066, "mem_pressure": 0.084, "io_ms": 3.7, "compute_ms": 2.8, "total_ms": 6.5, "tok_per_s": 153.1, "utility": 0.784}, {"lambda": 3.5, "k": 8, "fault_rate": 0.06, "working_set": 32, "ws_fits_ram": true, "avg_diversity": 7.3, "collapse_risk": 0.092, "mem_pressure": 0.084, "io_ms": 4.3, "compute_ms": 3.2, "total_ms": 7.5, "tok_per_s": 133.9, "utility": 0.734}, {"lambda": 4.0, "k": 2, "fault_rate": 0.1, "working_set": 28, "ws_fits_ram": true, "avg_diversity": 2.6, "collapse_risk": 0.0, "mem_pressure": 0.073, "io_ms": 1.0, "compute_ms": 0.8, "total_ms": 1.8, "tok_per_s": 543.5, "utility": 0.95}, {"lambda": 4.0, "k": 3, "fault_rate": 0.16, "working_set": 28, "ws_fits_ram": true, "avg_diversity": 3.3, "collapse_risk": 0.0, "mem_pressure": 0.073, "io_ms": 1.6, "compute_ms": 1.2, "total_ms": 2.8, "tok_per_s": 362.3, "utility": 0.937}, {"lambda": 4.0, "k": 4, "fault_rate": 0.075, "working_set": 28, "ws_fits_ram": true, "avg_diversity": 4.2, "collapse_risk": 0.0, "mem_pressure": 0.073, "io_ms": 2.1, "compute_ms": 1.6, "total_ms": 3.7, "tok_per_s": 271.7, "utility": 0.923}, {"lambda": 4.0, "k": 5, "fault_rate": 0.08, "working_set": 28, "ws_fits_ram": true, "avg_diversity": 5.1, "collapse_risk": 0.0, "mem_pressure": 0.073, "io_ms": 2.6, "compute_ms": 2.0, "total_ms": 4.6, "tok_per_s": 217.4, "utility": 0.909}, {"lambda": 4.0, "k": 6, "fault_rate": 0.065, "working_set": 28, "ws_fits_ram": true, "avg_diversity": 5.7, "collapse_risk": 0.044, "mem_pressure": 0.073, "io_ms": 3.1, "compute_ms": 2.4, "total_ms": 5.5, "tok_per_s": 181.2, "utility": 0.833}, {"lambda": 4.0, "k": 7, "fault_rate": 0.08, "working_set": 28, "ws_fits_ram": true, "avg_diversity": 6.5, "collapse_risk": 0.073, "mem_pressure": 0.073, "io_ms": 3.6, "compute_ms": 2.8, "total_ms": 6.4, "tok_per_s": 155.3, "utility": 0.779}, {"lambda": 4.0, "k": 8, "fault_rate": 0.06, "working_set": 28, "ws_fits_ram": true, "avg_diversity": 7.4, "collapse_risk": 0.071, "mem_pressure": 0.073, "io_ms": 4.2, "compute_ms": 3.2, "total_ms": 7.4, "tok_per_s": 135.9, "utility": 0.769}, {"lambda": 5.0, "k": 2, "fault_rate": 0.075, "working_set": 23, "ws_fits_ram": true, "avg_diversity": 2.7, "collapse_risk": 0.0, "mem_pressure": 0.06, "io_ms": 1.0, "compute_ms": 0.8, "total_ms": 1.8, "tok_per_s": 555.6, "utility": 0.955}, {"lambda": 5.0, "k": 3, "fault_rate": 0.12, "working_set": 23, "ws_fits_ram": true, "avg_diversity": 3.5, "collapse_risk": 0.0, "mem_pressure": 0.06, "io_ms": 1.5, "compute_ms": 1.2, "total_ms": 2.7, "tok_per_s": 370.4, "utility": 0.941}, {"lambda": 5.0, "k": 4, "fault_rate": 0.065, "working_set": 23, "ws_fits_ram": true, "avg_diversity": 4.3, "collapse_risk": 0.0, "mem_pressure": 0.06, "io_ms": 2.0, "compute_ms": 1.6, "total_ms": 3.6, "tok_per_s": 277.8, "utility": 0.928}, {"lambda": 5.0, "k": 5, "fault_rate": 0.09, "working_set": 23, "ws_fits_ram": true, "avg_diversity": 5.2, "collapse_risk": 0.0, "mem_pressure": 0.06, "io_ms": 2.5, "compute_ms": 2.0, "total_ms": 4.5, "tok_per_s": 222.2, "utility": 0.914}, {"lambda": 5.0, "k": 6, "fault_rate": 0.06, "working_set": 23, "ws_fits_ram": true, "avg_diversity": 5.9, "collapse_risk": 0.023, "mem_pressure": 0.06, "io_ms": 3.0, "compute_ms": 2.4, "total_ms": 5.4, "tok_per_s": 185.2, "utility": 0.868}, {"lambda": 5.0, "k": 7, "fault_rate": 0.065, "working_set": 23, "ws_fits_ram": true, "avg_diversity": 6.9, "collapse_risk": 0.017, "mem_pressure": 0.06, "io_ms": 3.5, "compute_ms": 2.8, "total_ms": 6.3, "tok_per_s": 158.7, "utility": 0.863}, {"lambda": 5.0, "k": 8, "fault_rate": 0.05, "working_set": 23, "ws_fits_ram": true, "avg_diversity": 7.7, "collapse_risk": 0.036, "mem_pressure": 0.06, "io_ms": 4.0, "compute_ms": 3.2, "total_ms": 7.2, "tok_per_s": 138.9, "utility": 0.824}, {"lambda": 6.0, "k": 2, "fault_rate": 0.085, "working_set": 19, "ws_fits_ram": true, "avg_diversity": 2.6, "collapse_risk": 0.0, "mem_pressure": 0.05, "io_ms": 1.0, "compute_ms": 0.8, "total_ms": 1.8, "tok_per_s": 564.5, "utility": 0.958}, {"lambda": 6.0, "k": 3, "fault_rate": 0.125, "working_set": 19, "ws_fits_ram": true, "avg_diversity": 3.5, "collapse_risk": 0.0, "mem_pressure": 0.05, "io_ms": 1.5, "compute_ms": 1.2, "total_ms": 2.7, "tok_per_s": 376.3, "utility": 0.945}, {"lambda": 6.0, "k": 4, "fault_rate": 0.07, "working_set": 19, "ws_fits_ram": true, "avg_diversity": 4.5, "collapse_risk": 0.0, "mem_pressure": 0.05, "io_ms": 1.9, "compute_ms": 1.6, "total_ms": 3.5, "tok_per_s": 282.3, "utility": 0.932}, {"lambda": 6.0, "k": 5, "fault_rate": 0.07, "working_set": 19, "ws_fits_ram": true, "avg_diversity": 5.3, "collapse_risk": 0.0, "mem_pressure": 0.05, "io_ms": 2.4, "compute_ms": 2.0, "total_ms": 4.4, "tok_per_s": 225.8, "utility": 0.919}, {"lambda": 6.0, "k": 6, "fault_rate": 0.07, "working_set": 19, "ws_fits_ram": true, "avg_diversity": 6.0, "collapse_risk": 0.004, "mem_pressure": 0.05, "io_ms": 2.9, "compute_ms": 2.4, "total_ms": 5.3, "tok_per_s": 188.2, "utility": 0.899}, {"lambda": 6.0, "k": 7, "fault_rate": 0.06, "working_set": 19, "ws_fits_ram": true, "avg_diversity": 7.1, "collapse_risk": 0.0, "mem_pressure": 0.05, "io_ms": 3.4, "compute_ms": 2.8, "total_ms": 6.2, "tok_per_s": 161.3, "utility": 0.892}, {"lambda": 6.0, "k": 8, "fault_rate": 0.05, "working_set": 19, "ws_fits_ram": true, "avg_diversity": 7.8, "collapse_risk": 0.021, "mem_pressure": 0.05, "io_ms": 3.9, "compute_ms": 3.2, "total_ms": 7.1, "tok_per_s": 141.1, "utility": 0.849}, {"lambda": 8.0, "k": 2, "fault_rate": 0.05, "working_set": 15, "ws_fits_ram": true, "avg_diversity": 2.8, "collapse_risk": 0.0, "mem_pressure": 0.039, "io_ms": 0.9, "compute_ms": 0.8, "total_ms": 1.7, "tok_per_s": 576.9, "utility": 0.962}, {"lambda": 8.0, "k": 3, "fault_rate": 0.08, "working_set": 15, "ws_fits_ram": true, "avg_diversity": 3.7, "collapse_risk": 0.0, "mem_pressure": 0.039, "io_ms": 1.4, "compute_ms": 1.2, "total_ms": 2.6, "tok_per_s": 384.6, "utility": 0.949}, {"lambda": 8.0, "k": 4, "fault_rate": 0.05, "working_set": 15, "ws_fits_ram": true, "avg_diversity": 4.6, "collapse_risk": 0.0, "mem_pressure": 0.039, "io_ms": 1.9, "compute_ms": 1.6, "total_ms": 3.5, "tok_per_s": 288.5, "utility": 0.936}, {"lambda": 8.0, "k": 5, "fault_rate": 0.06, "working_set": 15, "ws_fits_ram": true, "avg_diversity": 5.5, "collapse_risk": 0.0, "mem_pressure": 0.039, "io_ms": 2.3, "compute_ms": 2.0, "total_ms": 4.3, "tok_per_s": 230.8, "utility": 0.923}, {"lambda": 8.0, "k": 6, "fault_rate": 0.05, "working_set": 15, "ws_fits_ram": true, "avg_diversity": 6.5, "collapse_risk": 0.0, "mem_pressure": 0.039, "io_ms": 2.8, "compute_ms": 2.4, "total_ms": 5.2, "tok_per_s": 192.3, "utility": 0.91}, {"lambda": 8.0, "k": 7, "fault_rate": 0.055, "working_set": 15, "ws_fits_ram": true, "avg_diversity": 7.2, "collapse_risk": 0.0, "mem_pressure": 0.039, "io_ms": 3.3, "compute_ms": 2.8, "total_ms": 6.1, "tok_per_s": 164.8, "utility": 0.897}, {"lambda": 8.0, "k": 8, "fault_rate": 0.055, "working_set": 15, "ws_fits_ram": true, "avg_diversity": 8.2, "collapse_risk": 0.0, "mem_pressure": 0.039, "io_ms": 3.7, "compute_ms": 3.2, "total_ms": 6.9, "tok_per_s": 144.2, "utility": 0.884}];
+const canvas = document.getElementById('phase');
+const ctx = canvas.getContext('2d');
+const W = canvas.width - 60, H = canvas.height - 40;
+
+// Find ranges
+const lambdas = [...new Set(data.map(d => d.lambda))].sort((a,b)=>a-b);
+const ks = [...new Set(data.map(d => d.k))].sort((a,b)=>a-b);
+const lamRange = [Math.min(...lambdas), Math.max(...lambdas)];
+const kRange = [Math.min(...ks), Math.max(...ks)];
+
+const colors = {
+    stable: '#3fb950', marginal: '#d29922',
+    thrashing: '#f85149', collapsed: '#8b949e',
+    transitional: '#a371f7'
+};
+
+// Draw phase diagram
+for (const d of data) {
+    const x = 30 + (d.lambda - lamRange[0]) / (lamRange[1] - lamRange[0]) * W;
+    const y = 10 + (1 - (d.k - kRange[0]) / (kRange[1] - kRange[0])) * H;
+    let regime = 'transitional';
+    if (d.collapse_risk > 0.5) regime = 'collapsed';
+    else if (d.mem_pressure > 0.9 && d.fault_rate > 0.3) regime = 'thrashing';
+    else if (d.collapse_risk > 0.2 || d.fault_rate > 0.15) regime = 'marginal';
+    else if (d.mem_pressure < 0.7 && d.fault_rate < 0.1) regime = 'stable';
+
+    const r = 8 + d.utility * 12;  // size ∝ utility
+    ctx.fillStyle = colors[regime] || '#8b949e';
+    ctx.globalAlpha = 0.7;
+    ctx.beginPath();
+    ctx.arc(x, y, Math.max(3, r), 0, Math.PI*2);
+    ctx.fill();
+    ctx.globalAlpha = 1.0;
+    d._x = x; d._y = y; d._regime = regime;
+}
+
+// Labels
+ctx.fillStyle = '#8b949e'; ctx.font = '11px monospace';
+for (const lam of lambdas.filter((_,i) => i % Math.max(1, Math.floor(lambdas.length/5)) === 0)) {
+    const x = 30 + (lam - lamRange[0]) / (lamRange[1] - lamRange[0]) * W;
+    ctx.fillText(lam.toFixed(1), x, H + 30);
+}
+ctx.fillText('λ (locality)', W/2, H + 42);
+ctx.save(); ctx.translate(8, H/2); ctx.rotate(-Math.PI/2);
+ctx.fillText('k (top-k experts)', 0, 0); ctx.restore();
+for (const k of ks.filter((_,i) => i % Math.max(1, Math.floor(ks.length/6)) === 0)) {
+    const y = 10 + (1 - (k - kRange[0]) / (kRange[1] - kRange[0])) * H;
+    ctx.fillText(k.toString(), 2, y + 4);
+}
+
+// Highlight stable region
+const stable = data.filter(d => {
+    let r = 'transitional';
+    if (d.collapse_risk > 0.5) r = 'collapsed';
+    else if (d.mem_pressure > 0.9 && d.fault_rate > 0.3) r = 'thrashing';
+    else if (d.collapse_risk > 0.2 || d.fault_rate > 0.15) r = 'marginal';
+    else if (d.mem_pressure < 0.7 && d.fault_rate < 0.1) r = 'stable';
+    return r === 'stable';
+});
+if (stable.length > 0) {
+    const xs = stable.map(d => d._x), ys = stable.map(d => d._y);
+    ctx.strokeStyle = '#3fb950'; ctx.lineWidth = 2; ctx.setLineDash([5,5]);
+    ctx.beginPath();
+    ctx.moveTo(Math.min(...xs)-5, Math.min(...ys)-5);
+    ctx.lineTo(Math.max(...xs)+5, Math.min(...ys)-5);
+    ctx.lineTo(Math.max(...xs)+5, Math.max(...ys)+5);
+    ctx.lineTo(Math.min(...xs)-5, Math.max(...ys)+5);
+    ctx.closePath(); ctx.stroke();
+    ctx.setLineDash([]);
+}
+
+// Hover
+canvas.onmousemove = e => {
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    let best = null, bestDist = Infinity;
+    for (const d of data) {
+        const dx = mx - d._x, dy = my - d._y;
+        const dist = dx*dx + dy*dy;
+        if (dist < bestDist) { bestDist = dist; best = d; }
+    }
+    if (best && bestDist < 400) {
+        document.getElementById('info').innerHTML = `
+            <div class="metric"><span>λ</span><span class="val">${best.lambda.toFixed(1)}</span></div>
+            <div class="metric"><span>k</span><span class="val">${best.k}</span></div>
+            <div class="metric"><span>Regime</span><span class="val" style="color:${colors[best._regime]}">${best._regime.toUpperCase()}</span></div>
+            <div class="metric"><span>Utility U</span><span class="val">${best.utility.toFixed(3)}</span></div>
+            <div class="metric"><span>tok/s</span><span class="val">${best.tok_per_s}</span></div>
+            <div class="metric"><span>Fault rate</span><span class="val">${(best.fault_rate*100).toFixed(0)}%</span></div>
+            <div class="metric"><span>Collapse risk</span><span class="val">${best.collapse_risk.toFixed(3)}</span></div>
+            <div class="metric"><span>Memory pressure</span><span class="val">${(best.mem_pressure*100).toFixed(0)}%</span></div>
+        `;
+    }
+};
+
+// Find optimal point
+const best = data.reduce((a,b) => b.utility > a.utility ? b : a, data[0]);
+document.getElementById('optimal').innerHTML = `
+    <h2>Optimal Operating Point</h2>
+    <div class="metric"><span>λ*</span><span class="val">${best.lambda.toFixed(1)}</span></div>
+    <div class="metric"><span>k*</span><span class="val">${best.k}</span></div>
+    <div class="metric"><span>U*</span><span class="val">${best.utility.toFixed(3)}</span></div>
+    <div class="metric"><span>Regime</span><span class="val">STABLE</span></div>
+    <div class="metric"><span>tok/s</span><span class="val">${best.tok_per_s}</span></div>
+    <div class="metric"><span>Working set</span><span class="val">${best.working_set} experts (${(best.working_set*10.5).toFixed(0)}MB)</span></div>
+`;
+</script></body></html>

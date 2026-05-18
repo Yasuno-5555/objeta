@@ -1,0 +1,21 @@
+{
+  "prompt": "The little cat",
+  "output": "was walking in the park. She was looking for something to do. She saw a big tree and she wanted to climb it. She wanted to",
+  "tokens": 30,
+  "elapsed_s": 0.34,
+  "tok_per_s": 87.36,
+  "token_classes": {
+    "default": 11,
+    "steering": 14,
+    "transition": 5
+  },
+  "avg_skip_rate": 0.0,
+  "avg_entropy": 0.2104,
+  "avg_steering": 0.5775,
+  "avg_precision": 8.5,
+  "avg_collapse_score": 0.1,
+  "collapse_events": 6,
+  "warnings": 0,
+  "errors": 0,
+  "avg_routing_entropy": 0.20570096793702936
+}

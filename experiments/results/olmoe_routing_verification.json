@@ -1,0 +1,159 @@
+{
+  "model": "OLMoE-1B-7B (shard1, L0-L5)",
+  "n_layers_loaded": 6,
+  "n_experts": 64,
+  "top_k": 8,
+  "avg_routing_entropy_normalized": 0.9999,
+  "avg_routing_entropy_nat": 4.16,
+  "avg_expert_reuse_distance": 12.0,
+  "cache_hit_rate": 0.101,
+  "adaptive_k_at_high_entropy": 8,
+  "per_layer_entropy": {
+    "0": 4.16,
+    "1": 4.16,
+    "2": 4.16,
+    "3": 4.16,
+    "4": 4.16,
+    "5": 4.16
+  },
+  "per_layer_top_experts": {
+    "0": [
+      [
+        22,
+        3
+      ],
+      [
+        46,
+        3
+      ],
+      [
+        33,
+        3
+      ],
+      [
+        4,
+        2
+      ],
+      [
+        13,
+        2
+      ]
+    ],
+    "1": [
+      [
+        3,
+        3
+      ],
+      [
+        6,
+        3
+      ],
+      [
+        19,
+        2
+      ],
+      [
+        26,
+        2
+      ],
+      [
+        12,
+        2
+      ]
+    ],
+    "2": [
+      [
+        33,
+        3
+      ],
+      [
+        62,
+        2
+      ],
+      [
+        55,
+        2
+      ],
+      [
+        3,
+        2
+      ],
+      [
+        53,
+        2
+      ]
+    ],
+    "3": [
+      [
+        45,
+        2
+      ],
+      [
+        25,
+        2
+      ],
+      [
+        10,
+        2
+      ],
+      [
+        7,
+        2
+      ],
+      [
+        53,
+        1
+      ]
+    ],
+    "4": [
+      [
+        22,
+        3
+      ],
+      [
+        3,
+        2
+      ],
+      [
+        48,
+        2
+      ],
+      [
+        50,
+        2
+      ],
+      [
+        25,
+        2
+      ]
+    ],
+    "5": [
+      [
+        5,
+        2
+      ],
+      [
+        23,
+        2
+      ],
+      [
+        28,
+        2
+      ],
+      [
+        12,
+        2
+      ],
+      [
+        0,
+        2
+      ]
+    ]
+  },
+  "findings": [
+    "\u2713 HIGH-ENTROPY ROUTING CONFIRMED: entropy=4.2 nat \u2248 log(64)=4.2. Load-balanced router eliminates expert locality.",
+    "\u2713 CACHE RESISTANCE: hit rate=10.1% with static 16/64. Load-balanced routing defeats frequency-based caching.",
+    "\u2713 ADAPTIVE TOP-K: at entropy=0.95 \u2192 k=8. Scheduler correctly uses full expert set for high-entropy routing.",
+    "\u2713 SKIP DISABLED: fusion_ratio=1.0 is correct for load-balanced MoE. Layer skip is Family A only."
+  ]
+}

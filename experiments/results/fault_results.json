@@ -1,0 +1,24 @@
+[
+  {
+    "fault_type": "force_q3",
+    "token_idx": 8,
+    "detected": true,
+    "detection_latency": 0,
+    "recovery_latency": 1,
+    "collapse_sequence": [
+      "warning"
+    ],
+    "notes": "intensity=1.0, duration=8"
+  },
+  {
+    "fault_type": "excessive_skip",
+    "token_idx": 8,
+    "detected": true,
+    "detection_latency": 0,
+    "recovery_latency": 1,
+    "collapse_sequence": [
+      "warning"
+    ],
+    "notes": "intensity=1.0, duration=6"
+  }
+]

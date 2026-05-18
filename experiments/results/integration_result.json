@@ -1,0 +1,22 @@
+{
+  "prompt": "Cats are",
+  "tokens_generated": 24,
+  "elapsed_s": 9.25,
+  "tok_per_s": 2.59,
+  "output_text": "Certainly! Here's a sample paragraph from the text material:\n\nCats are the most intelligent",
+  "faults_enabled": true,
+  "tokens": 24,
+  "token_classes": {
+    "default": 8,
+    "steering": 15,
+    "repetitive": 1
+  },
+  "avg_skip_rate": 0.116,
+  "avg_entropy": 0.124,
+  "avg_steering": 0.5726,
+  "avg_precision": 7.8,
+  "avg_collapse_score": 0.083,
+  "collapse_events": 4,
+  "warnings": 0,
+  "errors": 0
+}

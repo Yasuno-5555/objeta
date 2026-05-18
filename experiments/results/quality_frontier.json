@@ -1,0 +1,41 @@
+{
+  "model": "stories-moe",
+  "results": [
+    {
+      "lambda": 0,
+      "tokens": 96,
+      "tok_per_s": 99.0,
+      "repetition_rate": 0.0,
+      "avg_entropy": 0.2094,
+      "avg_steering": 0.6151,
+      "avg_routing_entropy": 0.2277
+    },
+    {
+      "lambda": 2,
+      "tokens": 96,
+      "tok_per_s": 103.2,
+      "repetition_rate": 0.0,
+      "avg_entropy": 0.2094,
+      "avg_steering": 0.6151,
+      "avg_routing_entropy": 0.2277
+    },
+    {
+      "lambda": 4,
+      "tokens": 96,
+      "tok_per_s": 102.8,
+      "repetition_rate": 0.0,
+      "avg_entropy": 0.2094,
+      "avg_steering": 0.6151,
+      "avg_routing_entropy": 0.2277
+    },
+    {
+      "lambda": 8,
+      "tokens": 96,
+      "tok_per_s": 104.7,
+      "repetition_rate": 0.0,
+      "avg_entropy": 0.2094,
+      "avg_steering": 0.6151,
+      "avg_routing_entropy": 0.2277
+    }
+  ]
+}

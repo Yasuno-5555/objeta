@@ -1,0 +1,62 @@
+{
+  "config": {
+    "model": "Qwen2.5-0.5B",
+    "family": "spherical_steering",
+    "n_layers": 24,
+    "hidden": 896,
+    "max_tokens": 64
+  },
+  "results": [
+    {
+      "prompt": "The meaning of life is",
+      "tokens": 64,
+      "avg_us": 178343.8,
+      "p50_us": 155814.7,
+      "p95_us": 350425.2,
+      "scheduler_us": 34.5,
+      "scheduler_pct": 0.02,
+      "tok_per_s": 5.6,
+      "repetition_rate": 0.0,
+      "entropy_trend": -0.001673,
+      "avg_entropy": 0.1234,
+      "avg_steering": 0.39,
+      "class_oscillations": 5,
+      "collapse_events": 22,
+      "output": " a question that has been debated for centuries. Some people believe that life is a journey of self-discovery and growth, while others believe that life is a struggle for survival. Regardless of your "
+    },
+    {
+      "prompt": "Explain quantum computing simply:",
+      "tokens": 64,
+      "avg_us": 185895.2,
+      "p50_us": 163702.9,
+      "p95_us": 338611.3,
+      "scheduler_us": 32.0,
+      "scheduler_pct": 0.02,
+      "tok_per_s": 5.4,
+      "repetition_rate": 0.0,
+      "entropy_trend": -0.001756,
+      "avg_entropy": 0.0747,
+      "avg_steering": 0.4401,
+      "class_oscillations": 20,
+      "collapse_events": 50,
+      "output": " What is it and how does it work?\nQuantum computing is a type of computing that uses the principles of quantum mechanics to perform calculations. Unlike classical computers, which use bits to represen"
+    },
+    {
+      "prompt": "Write a short story about a robot:",
+      "tokens": 64,
+      "avg_us": 157248.6,
+      "p50_us": 155366.9,
+      "p95_us": 203904.9,
+      "scheduler_us": 33.8,
+      "scheduler_pct": 0.02,
+      "tok_per_s": 6.4,
+      "repetition_rate": 0.0,
+      "entropy_trend": -0.002177,
+      "avg_entropy": 0.1867,
+      "avg_steering": 0.4196,
+      "class_oscillations": 29,
+      "collapse_events": 7,
+      "output": " \"A robot named R2-D2 was programmed to be a space explorer. One day, R2-D2 was sent to explore a new planet. As R2-D2 traveled through the planet's atmosphere, he encountered a strange creature. The "
+    }
+  ]
+}

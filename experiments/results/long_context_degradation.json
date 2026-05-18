@@ -1,0 +1,195 @@
+{
+  "max_tokens": 512,
+  "generated": 512,
+  "elapsed_s": 18.26,
+  "tok_per_s": 28.0,
+  "final_risk_score": 0.2052,
+  "conservative_triggered": false,
+  "conservative_events": [],
+  "total_collapse_tokens": 0,
+  "class_oscillations": 67,
+  "windows": [
+    {
+      "start": 0,
+      "end": 64,
+      "avg_entropy": 0.2073,
+      "avg_steering": 0.5714,
+      "avg_risk": 0.1903,
+      "collapse_rate": 0.25,
+      "repeat_rate": 0.0,
+      "dominant_class": "transition"
+    },
+    {
+      "start": 64,
+      "end": 128,
+      "avg_entropy": 0.2831,
+      "avg_steering": 0.5272,
+      "avg_risk": 0.1083,
+      "collapse_rate": 0.172,
+      "repeat_rate": 0.0,
+      "dominant_class": "transition"
+    },
+    {
+      "start": 128,
+      "end": 192,
+      "avg_entropy": 0.2811,
+      "avg_steering": 0.532,
+      "avg_risk": 0.135,
+      "collapse_rate": 0.125,
+      "repeat_rate": 0.0,
+      "dominant_class": "transition"
+    },
+    {
+      "start": 192,
+      "end": 256,
+      "avg_entropy": 0.2783,
+      "avg_steering": 0.5588,
+      "avg_risk": 0.1762,
+      "collapse_rate": 0.266,
+      "repeat_rate": 0.0,
+      "dominant_class": "transition"
+    },
+    {
+      "start": 256,
+      "end": 320,
+      "avg_entropy": 0.2443,
+      "avg_steering": 0.554,
+      "avg_risk": 0.1624,
+      "collapse_rate": 0.188,
+      "repeat_rate": 0.0,
+      "dominant_class": "transition"
+    },
+    {
+      "start": 320,
+      "end": 384,
+      "avg_entropy": 0.2652,
+      "avg_steering": 0.5442,
+      "avg_risk": 0.1732,
+      "collapse_rate": 0.234,
+      "repeat_rate": 0.0,
+      "dominant_class": "transition"
+    },
+    {
+      "start": 384,
+      "end": 448,
+      "avg_entropy": 0.208,
+      "avg_steering": 0.5338,
+      "avg_risk": 0.1835,
+      "collapse_rate": 0.234,
+      "repeat_rate": 0.0,
+      "dominant_class": "default"
+    },
+    {
+      "start": 448,
+      "end": 512,
+      "avg_entropy": 0.1625,
+      "avg_steering": 0.5313,
+      "avg_risk": 0.173,
+      "collapse_rate": 0.234,
+      "repeat_rate": 0.0,
+      "dominant_class": "default"
+    }
+  ],
+  "snapshots": [
+    {
+      "token_idx": 0,
+      "class": "default",
+      "collapse": "healthy",
+      "risk_score": 0.0,
+      "conservative": false,
+      "total_collapse": 0,
+      "total_warning": 0,
+      "recent_collapse_rate": 0.0,
+      "text_snippet": "<s> Once upon a time, in a land far away, there lived a"
+    },
+    {
+      "token_idx": 64,
+      "class": "transition",
+      "collapse": "healthy",
+      "risk_score": 0.1631,
+      "conservative": false,
+      "total_collapse": 0,
+      "total_warning": 16,
+      "recent_collapse_rate": 0.094,
+      "text_snippet": "world. She was always looking for adventure and adventure. One day, she decided to go on a journey. She wanted to explor"
+    },
+    {
+      "token_idx": 128,
+      "class": "transition",
+      "collapse": "warning",
+      "risk_score": 0.1909,
+      "conservative": false,
+      "total_collapse": 0,
+      "total_warning": 28,
+      "recent_collapse_rate": 0.141,
+      "text_snippet": "on a journey and soon came across a big, beautiful forest. She was walking through the forest and she saw a beautiful la"
+    },
+    {
+      "token_idx": 192,
+      "class": "transition",
+      "collapse": "warning",
+      "risk_score": 0.084,
+      "conservative": false,
+      "total_collapse": 0,
+      "total_warning": 36,
+      "recent_collapse_rate": 0.078,
+      "text_snippet": "she wanted to see what she could find something special.\nAs she walked along the shore, she saw a big, green trees and f"
+    },
+    {
+      "token_idx": 256,
+      "class": "default",
+      "collapse": "healthy",
+      "risk_score": 0.1949,
+      "conservative": false,
+      "total_collapse": 0,
+      "total_warning": 52,
+      "recent_collapse_rate": 0.141,
+      "text_snippet": "bow and a rainbow. She saw a rainbow and a rainbow and a rainbow. She saw a rainbow and a rainbow. She saw a rainbow and"
+    },
+    {
+      "token_idx": 320,
+      "class": "transition",
+      "collapse": "healthy",
+      "risk_score": 0.1834,
+      "conservative": false,
+      "total_collapse": 0,
+      "total_warning": 64,
+      "recent_collapse_rate": 0.094,
+      "text_snippet": "saw a rainbow and she saw a rainbow and a rainbow. She saw a rainbow and a rainbow. She saw a rainbow and a rainbow and "
+    },
+    {
+      "token_idx": 384,
+      "class": "transition",
+      "collapse": "healthy",
+      "risk_score": 0.2128,
+      "conservative": false,
+      "total_collapse": 0,
+      "total_warning": 79,
+      "recent_collapse_rate": 0.141,
+      "text_snippet": "to explore the world. She saw a rainbow and she wanted to explore the world. She saw a rainbow and she was so excited. S"
+    },
+    {
+      "token_idx": 448,
+      "class": "default",
+      "collapse": "healthy",
+      "risk_score": 0.1937,
+      "conservative": false,
+      "total_collapse": 0,
+      "total_warning": 94,
+      "recent_collapse_rate": 0.109,
+      "text_snippet": "a rainbow and she saw a rainbow and she saw a rainbow. She saw a rainbow and she saw a rainbow. She saw a rainbow and sh"
+    },
+    {
+      "token_idx": 511,
+      "class": "default",
+      "collapse": "healthy",
+      "risk_score": 0.2052,
+      "conservative": false,
+      "total_collapse": 0,
+      "total_warning": 109,
+      "recent_collapse_rate": 0.141,
+      "text_snippet": "and she saw a rainbow. She saw a rainbow and she saw a rainbow. She saw a rainbow and she saw a rainbow. She saw a rainb"
+    }
+  ],
+  "output_excerpt": "little girl named Lucy. She was very happy and loved to explore the world. She was always looking for adventure and adventure. One day, she decided to go on a journey. She wanted to explore the world and see what she could find out what she could find. She was so excited to see what she could find out what she could find.\nOne day, she went on a journey and soon came across a big, beautiful forest. She was walking through the forest and she saw a beautiful lake. She saw a river and a beautiful la"
+}

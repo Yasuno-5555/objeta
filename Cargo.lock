@@ -529,6 +529,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "objeta-os"
+version = "0.1.0"
+dependencies = [
+ "objeta-core",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "objeta-parser"
 version = "0.1.0"
 dependencies = [

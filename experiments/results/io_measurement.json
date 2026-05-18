@@ -1,0 +1,13 @@
+{
+  "cold_access_us": 2626.6,
+  "warm_access_us": 197.7,
+  "gemv_compute_us": 401.3,
+  "cold_warm_ratio": 13.3,
+  "uniform_routing_us": 3330.5,
+  "locality_routing_us": 2531.1,
+  "routing_speedup": 1.3,
+  "cold_read_mbps": 2399.0,
+  "warm_read_mbps": 8095.0,
+  "projected_qwen36_uniform_tok_s": 1.0,
+  "projected_qwen36_locality_tok_s": 2.6
+}

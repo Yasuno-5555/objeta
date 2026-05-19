@@ -1,0 +1,12 @@
+{
+  "fusion_ratio": 0.50,
+  "moe_on_deltanet": 1,
+  "moe_prune_mode": "top_p",
+  "moe_top_p": 0.95,
+  "moe_contrib_threshold": 0.95,
+  "expert_cache_mb": 512,
+  "timing": true,
+  "trace": true,
+  "max_experts": 8,
+  "min_experts": 1
+}

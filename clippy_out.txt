@@ -1,0 +1,5 @@
+   Compiling objeta-qwen36-executor v0.1.0 (/Users/yasuno/projects/objeta/crates/objeta-qwen36-executor)
+    Checking objeta-phase v0.1.0 (/Users/yasuno/projects/objeta/crates/objeta-phase)
+    Checking objeta-experiments v0.1.0 (/Users/yasuno/projects/objeta/experiments)
+    Checking objeta-cli v0.1.0 (/Users/yasuno/projects/objeta/crates/objeta-cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 34.31s

@@ -835,6 +835,74 @@ struct LayerWeights {
     qkv_M: usize, qkv_K: usize, o_M: usize, o_K: usize,
 }
 
+use std::collections::BTreeSet;
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct LayerTrace {
+    pub layer: usize,
+    pub hidden_norm: f32,
+    pub expert_ids: Vec<usize>,
+    pub expert_weights: Vec<f32>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct StepTrace {
+    pub step: usize,
+    pub token_id: usize,
+    pub entropy: f32,
+    pub logits_topk_ids: Vec<i32>,
+    pub logits_topk_values: Vec<f32>,
+    pub layers: Vec<LayerTrace>,
+}
+
+#[derive(Clone, Default)]
+pub struct MoELayerStats {
+    pub calls: u64,
+    pub shared_calls: u64,
+    pub total_executed_experts: u64,
+    pub total_executed_mass: f64,
+    pub total_dropped_mass: f64,
+    pub total_load_count: u64,
+    pub total_warm_hit_count: u64,
+    pub total_cold_hit_count: u64,
+    pub total_compute_sec: f64,
+    pub total_bytes_read: u64,
+    pub total_router_sec: f64,
+    pub total_select_sec: f64,
+    pub total_load_sec: f64,
+    pub total_dequant_sec: f64,
+    pub total_gemv_sec: f64,
+    pub total_accumulate_sec: f64,
+    pub total_shared_sec: f64,
+    pub total_router_wall_sec: f64,
+    pub total_select_wall_sec: f64,
+    pub total_load_wall_sec: f64,
+    pub total_exec_wall_sec: f64,
+    pub total_accumulate_wall_sec: f64,
+    pub unique_expert_ids: BTreeSet<usize>,
+    pub last_expert_ids: Vec<usize>,
+    pub last_router_top8_ids: Vec<usize>,
+    pub last_router_top8_weights: Vec<f32>,
+    pub last_candidate_ids: Vec<usize>,
+    pub last_candidate_weights: Vec<f32>,
+    pub last_selected_ids: Vec<usize>,
+    pub last_selected_weights: Vec<f32>,
+    pub last_dispatch_ids: Vec<usize>,
+    pub last_dispatch_weights: Vec<f32>,
+    pub last_selected_count: usize,
+    pub last_selected_renormalized: bool,
+}
+
+#[derive(Clone, Default)]
+pub struct ForwardLayerStats {
+    pub calls: u64,
+    pub total_layer_wall_sec: f64,
+    pub total_deltanet_wall_sec: f64,
+    pub total_gqa_wall_sec: f64,
+    pub total_shared_wall_sec: f64,
+    pub total_moe_wall_sec: f64,
+}
+
 pub struct Qwen36Runner {
     embed: memmap2::Mmap,   // mmap'd embed_tokens.bin (2GB, zero-copy)
     lm_head: Option<memmap2::Mmap>, // mmap'd lm_head.bin when embeddings are untied
@@ -883,6 +951,32 @@ pub struct Qwen36Runner {
     moe_up_buf: Vec<f32>,        // 512
     moe_hidden_buf: Vec<f32>,    // 512
     moe_down_buf: Vec<f32>,      // 2048
+    
+    // Trace recording and replay fields
+    pub record_trace_path: Option<String>,
+    pub replay_traces: Option<Vec<StepTrace>>,
+    pub current_step_trace: Option<StepTrace>,
+    pub step_counter: usize,
+    
+    // Stats tracking fields
+    pub moe_stats: Vec<MoELayerStats>,
+    pub forward_stats: Vec<ForwardLayerStats>,
+    pub lm_head_calls: u64,
+    pub lm_head_wall_sec: f64,
+    pub forward_calls: u64,
+    pub forward_wall_sec: f64,
+    
+    // Expert Policy config fields
+    pub expert_policy: crate::strategy::ExpertPolicyConfig,
+    pub moe_prune_mode: i32,
+    pub moe_top_p: f32,
+    pub moe_contrib_threshold: f32,
+    pub min_experts: usize,
+    pub max_experts: usize,
+    pub moe_ema_output_norm: Vec<Vec<f32>>,
+    // Debug overrides
+    pub debug_force_attn_full: bool,
+    pub debug_force_moe_skip: bool,
 }
 
 impl Qwen36Runner {
@@ -1039,16 +1133,101 @@ impl Qwen36Runner {
             moe_up_buf: vec![0.0f32; 512],
             moe_hidden_buf: vec![0.0f32; 512],
             moe_down_buf: vec![0.0f32; HDIM],
+            
+            record_trace_path: None,
+            replay_traces: None,
+            current_step_trace: None,
+            step_counter: 0,
+            
+            moe_stats: vec![MoELayerStats::default(); 40],
+            forward_stats: vec![ForwardLayerStats::default(); 40],
+            lm_head_calls: 0,
+            lm_head_wall_sec: 0.0,
+            forward_calls: 0,
+            forward_wall_sec: 0.0,
+            
+            expert_policy: crate::strategy::ExpertPolicyConfig::Exact,
+            moe_prune_mode: 0,
+            moe_top_p: 1.0,
+            moe_contrib_threshold: 1.0,
+            min_experts: 2,
+            max_experts: 8,
+            moe_ema_output_norm: vec![vec![1.0f32; 256]; 40],
+            debug_force_attn_full: false,
+            debug_force_moe_skip: false,
         })
+    }
+
+    pub fn sync_legacy_policy_fields(&mut self) {
+        match &self.expert_policy {
+            crate::strategy::ExpertPolicyConfig::Exact => {
+                self.moe_prune_mode = 0;
+                self.moe_top_p = 1.0;
+                self.moe_contrib_threshold = 1.0;
+            }
+            crate::strategy::ExpertPolicyConfig::TopP {
+                p,
+                min_experts,
+                max_experts,
+            } => {
+                self.moe_prune_mode = 0;
+                self.moe_top_p = p.clamp(0.0, 1.0);
+                self.moe_contrib_threshold = 1.0;
+                self.min_experts = *min_experts;
+                self.max_experts = *max_experts;
+            }
+            crate::strategy::ExpertPolicyConfig::Contribution {
+                threshold,
+                min_experts,
+                max_experts,
+                ..
+            } => {
+                self.moe_prune_mode = 1;
+                self.moe_top_p = 1.0;
+                self.moe_contrib_threshold = threshold.clamp(0.0, 1.0);
+                self.min_experts = *min_experts;
+                self.max_experts = *max_experts;
+            }
+            crate::strategy::ExpertPolicyConfig::AdaptiveEntropy {
+                min_experts,
+                max_experts,
+                ..
+            } => {
+                self.moe_prune_mode = 0;
+                self.moe_top_p = 1.0;
+                self.moe_contrib_threshold = 1.0;
+                self.min_experts = *min_experts;
+                self.max_experts = *max_experts;
+            }
+        }
+    }
+
+    pub fn set_expert_policy(&mut self, policy: crate::strategy::ExpertPolicyConfig) {
+        self.expert_policy = policy;
+        self.sync_legacy_policy_fields();
     }
 
     /// Forward pass WITH timing breakdown. Returns (h, [deltanet_ms, gqa_ms, shared_ms, moe_ms]).
     pub fn forward_timed(&mut self, token_id: usize, pos: usize, seq_len: usize) -> (Vec<f32>, [f64; 5]) {
         use std::time::Instant;
+        let forward_start = Instant::now();
+
+        // Initialize trace step if recording
+        if self.record_trace_path.is_some() {
+            self.current_step_trace = Some(StepTrace {
+                step: self.step_counter,
+                token_id,
+                entropy: 0.0,
+                logits_topk_ids: Vec::new(),
+                logits_topk_values: Vec::new(),
+                layers: Vec::new(),
+            });
+        }
+
         let mut h = {
-    let ptr = unsafe { self.embed.as_ptr().add(token_id * HDIM * 4) as *const f32 };
-    (0..HDIM).map(|i| unsafe { *ptr.add(i) }).collect::<Vec<f32>>()
-};
+            let ptr = unsafe { self.embed.as_ptr().add(token_id * HDIM * 4) as *const f32 };
+            (0..HDIM).map(|i| unsafe { *ptr.add(i) }).collect::<Vec<f32>>()
+        };
         let mut t_delta = 0.0f64;
         let mut t_gqa = 0.0f64;
         let mut t_shared = 0.0f64;
@@ -1061,8 +1240,26 @@ impl Qwen36Runner {
         let mut n_moe_collapse = 0usize;
 
         for l in 0..40 {
+            let layer_start = Instant::now();
+            let mut layer_t_delta = 0.0f64;
+            let mut layer_t_gqa = 0.0f64;
+            let mut layer_t_shared = 0.0f64;
+            let mut layer_t_moe = 0.0f64;
+
             let policy = &self.policy_table[l];
             let lw = &self.layers[l];
+
+            // Debug overrides
+            let attn_policy = if self.debug_force_attn_full {
+                AttnPolicy::Full
+            } else {
+                policy.attn
+            };
+            let moe_policy = if self.debug_force_moe_skip {
+                MoEPolicy::Skip
+            } else {
+                policy.moe
+            };
 
             // ── Norm (always, cheap) ──
             let t0 = Instant::now();
@@ -1074,7 +1271,7 @@ impl Qwen36Runner {
             t_norm += t0.elapsed().as_secs_f64();
 
             // ── Attention (policy-driven) ──
-            let ao = match policy.attn {
+            let ao = match attn_policy {
                 AttnPolicy::Full => {
                     if policy.is_steering {
                         // GQA steering layer: Metal fused kernel
@@ -1116,7 +1313,9 @@ impl Qwen36Runner {
                             );
                             ao
                         };
-                        t_gqa += t0.elapsed().as_secs_f64();
+                        let dur = t0.elapsed().as_secs_f64();
+                        layer_t_gqa += dur;
+                        t_gqa += dur;
                         ao
                     } else {
                         // DeltaNet transport layer
@@ -1134,7 +1333,9 @@ impl Qwen36Runner {
                             l,
                             pos,
                         );
-                        t_delta += t0.elapsed().as_secs_f64();
+                        let dur = t0.elapsed().as_secs_f64();
+                        layer_t_delta += dur;
+                        t_delta += dur;
                         ao
                     }
                 }
@@ -1160,9 +1361,30 @@ impl Qwen36Runner {
             };
             t_norm += t0.elapsed().as_secs_f64();
 
+            // Record trace norm for this layer
+            if self.record_trace_path.is_some() {
+                if let Some(ref mut step_trace) = self.current_step_trace {
+                    let h_norm_val = {
+                        let mut sum = 0.0f32;
+                        for &x in &h_norm2 { sum += x * x; }
+                        (sum / h_norm2.len() as f32).sqrt()
+                    };
+                    if let Some(lyr) = step_trace.layers.iter_mut().find(|lyr| lyr.layer == l) {
+                        lyr.hidden_norm = h_norm_val;
+                    } else {
+                        step_trace.layers.push(LayerTrace {
+                            layer: l,
+                            hidden_norm: h_norm_val,
+                            expert_ids: Vec::new(),
+                            expert_weights: Vec::new(),
+                        });
+                    }
+                }
+            }
+
             // ── Shared expert (policy-driven) ──
             let t0 = Instant::now();
-            if policy.moe != MoEPolicy::Skip && !skip_moe && !lw.se_gate.is_empty() {
+            if moe_policy != MoEPolicy::Skip && !skip_moe && !lw.se_gate.is_empty() {
                 let gate = gemv_f16(&lw.se_gate, &h_norm2, 512, HDIM);
                 let up = gemv_f16(&lw.se_up, &h_norm2, 512, HDIM);
                 let mut hidden = gate.clone();
@@ -1171,17 +1393,34 @@ impl Qwen36Runner {
                 let se_gate = 1.0 / (1.0 + (-dot_f32(&lw.se_gate_w, &h_norm2)).exp());
                 for i in 0..HDIM { h[i] += se_out[i] * se_gate; }
             }
-            t_shared += t0.elapsed().as_secs_f64();
+            let dur = t0.elapsed().as_secs_f64();
+            layer_t_shared += dur;
+            t_shared += dur;
 
             // ── MoE dispatch (policy-driven) ──
             let t0 = Instant::now();
-            if self.moe_enabled && policy.moe != MoEPolicy::Skip && !skip_moe {
+            if self.moe_enabled && moe_policy != MoEPolicy::Skip && !skip_moe {
                 let moe_out = self.call_moe(&h_norm2, l);
                 for i in 0..HDIM { h[i] += moe_out[i]; }
+            } else {
+                n_moe_collapse += 1;
             }
-            t_moe += t0.elapsed().as_secs_f64();
+            let dur = t0.elapsed().as_secs_f64();
+            layer_t_moe += dur;
+            t_moe += dur;
+
+            // Update forward stats
+            let layer_elapsed = layer_start.elapsed().as_secs_f64();
+            self.forward_stats[l].calls += 1;
+            self.forward_stats[l].total_layer_wall_sec += layer_elapsed;
+            self.forward_stats[l].total_deltanet_wall_sec += layer_t_delta;
+            self.forward_stats[l].total_gqa_wall_sec += layer_t_gqa;
+            self.forward_stats[l].total_shared_wall_sec += layer_t_shared;
+            self.forward_stats[l].total_moe_wall_sec += layer_t_moe;
         }
 
+        self.forward_calls += 1;
+        self.forward_wall_sec += forward_start.elapsed().as_secs_f64();
 
         let n_full: usize = self.policy_table.iter().filter(|p| p.attn == AttnPolicy::Full).count();
         let n_collapse: usize = self.policy_table.iter().filter(|p| p.attn == AttnPolicy::Collapse).count();
@@ -1300,9 +1539,158 @@ impl Qwen36Runner {
 
     fn call_moe(&mut self, h: &[f32], l: usize) -> Vec<f32> {
         // Exact HF routing: always top-8 experts with renormalized softmax weights.
-        let (eidx, ew) = crate::moe_dispatch::router_topk_cpu(&self.routers[l], h, 8);
+        let (mut eidx, mut ew) = crate::moe_dispatch::router_topk_cpu(&self.routers[l], h, 8);
+
+        // Replay/Policy override
+        let mut replayed = false;
+        if let Some(ref traces) = self.replay_traces {
+            if let Some(trace) = traces.iter().find(|t| t.step == self.step_counter) {
+                if let Some(layer_trace) = trace.layers.iter().find(|lyr| lyr.layer == l) {
+                    if !layer_trace.expert_ids.is_empty() {
+                        eidx = layer_trace.expert_ids.clone();
+                        ew = layer_trace.expert_weights.clone();
+                        replayed = true;
+                    }
+                }
+            }
+        }
+
+        if !replayed {
+            match &self.expert_policy {
+                crate::strategy::ExpertPolicyConfig::Exact => {}
+                crate::strategy::ExpertPolicyConfig::TopP { p, min_experts, max_experts } => {
+                    let mut items: Vec<(usize, f32)> = eidx.iter().copied().zip(ew.iter().copied()).collect();
+                    items.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                    
+                    let mut kept_idx = Vec::new();
+                    let mut kept_w = Vec::new();
+                    let mut cum_w = 0.0f32;
+                    for (i, (id, w)) in items.into_iter().enumerate() {
+                        kept_idx.push(id);
+                        kept_w.push(w);
+                        cum_w += w;
+                        if cum_w >= *p && (i + 1) >= *min_experts {
+                            break;
+                        }
+                        if (i + 1) >= *max_experts {
+                            break;
+                        }
+                    }
+                    let sum: f32 = kept_w.iter().sum::<f32>().max(1e-12);
+                    for w in &mut kept_w { *w /= sum; }
+                    eidx = kept_idx;
+                    ew = kept_w;
+                }
+                crate::strategy::ExpertPolicyConfig::Contribution { threshold, min_experts, max_experts, ema_beta } => {
+                    let mut items: Vec<(usize, f32, f32)> = eidx.iter().copied().zip(ew.iter().copied()).map(|(id, w)| {
+                        let ema = self.moe_ema_output_norm[l][id];
+                        (id, w, w * ema)
+                    }).collect();
+                    items.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+                    
+                    let total_score: f32 = items.iter().map(|x| x.2).sum::<f32>().max(1e-12);
+                    let mut kept_idx = Vec::new();
+                    let mut kept_w = Vec::new();
+                    let mut cum_score = 0.0f32;
+                    for (i, (id, w, score)) in items.into_iter().enumerate() {
+                        kept_idx.push(id);
+                        kept_w.push(w);
+                        cum_score += score;
+                        if (cum_score / total_score) >= *threshold && (i + 1) >= *min_experts {
+                            break;
+                        }
+                        if (i + 1) >= *max_experts {
+                            break;
+                        }
+                    }
+                    let sum: f32 = kept_w.iter().sum::<f32>().max(1e-12);
+                    for w in &mut kept_w { *w /= sum; }
+                    eidx = kept_idx;
+                    ew = kept_w;
+
+                    // Update EMA
+                    for id in 0..256 {
+                        self.moe_ema_output_norm[l][id] *= *ema_beta;
+                    }
+                    for (&id, &w) in eidx.iter().zip(ew.iter()) {
+                        self.moe_ema_output_norm[l][id] += (1.0 - *ema_beta) * w;
+                    }
+                }
+                crate::strategy::ExpertPolicyConfig::AdaptiveEntropy {
+                    low_entropy_p,
+                    mid_entropy_p,
+                    high_entropy_p,
+                    low_entropy_threshold,
+                    mid_entropy_threshold,
+                    min_experts,
+                    max_experts,
+                    ..
+                } => {
+                    let entropy: f32 = -ew.iter().map(|&w| if w > 1e-10 { w * w.ln() } else { 0.0 }).sum::<f32>();
+                    let target_p = if entropy < *low_entropy_threshold {
+                        *low_entropy_p
+                    } else if entropy < *mid_entropy_threshold {
+                        *mid_entropy_p
+                    } else {
+                        *high_entropy_p
+                    };
+                    let mut items: Vec<(usize, f32)> = eidx.iter().copied().zip(ew.iter().copied()).collect();
+                    items.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                    
+                    let mut kept_idx = Vec::new();
+                    let mut kept_w = Vec::new();
+                    let mut cum_w = 0.0f32;
+                    for (i, (id, w)) in items.into_iter().enumerate() {
+                        kept_idx.push(id);
+                        kept_w.push(w);
+                        cum_w += w;
+                        if cum_w >= target_p && (i + 1) >= *min_experts {
+                            break;
+                        }
+                        if (i + 1) >= *max_experts {
+                            break;
+                        }
+                    }
+                    let sum: f32 = kept_w.iter().sum::<f32>().max(1e-12);
+                    for w in &mut kept_w { *w /= sum; }
+                    eidx = kept_idx;
+                    ew = kept_w;
+                }
+            }
+        }
+
+        // Record trace for this layer
+        if self.record_trace_path.is_some() {
+            if let Some(ref mut step_trace) = self.current_step_trace {
+                let h_norm_val = {
+                    let mut sum = 0.0f32;
+                    for &x in h { sum += x * x; }
+                    (sum / h.len() as f32).sqrt()
+                };
+                let mut found = false;
+                for lyr in &mut step_trace.layers {
+                    if lyr.layer == l {
+                        lyr.hidden_norm = h_norm_val;
+                        lyr.expert_ids = eidx.iter().map(|&id| id as usize).collect();
+                        lyr.expert_weights = ew.clone();
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    step_trace.layers.push(LayerTrace {
+                        layer: l,
+                        hidden_norm: h_norm_val,
+                        expert_ids: eidx.iter().map(|&id| id as usize).collect(),
+                        expert_weights: ew.clone(),
+                    });
+                }
+            }
+        }
 
         let mut out = vec![0.0f32; HDIM];
+        let mut warm_hits = 0u64;
+        let mut cold_hits = 0u64;
 
         // ── Phase 1: gather expert IDs, separate cached from uncached ──
         let n = eidx.len();
@@ -1328,53 +1716,67 @@ impl Qwen36Runner {
                 let down_out = &mut self.moe_down_buf;
                 fill_gemv_f32(down_out, down, hidden, HDIM, 512);
                 for i in 0..HDIM { out[i] += down_out[i] * rw; }
+                warm_hits += 1;
             } else {
                 uncached_ids.push(eid);
                 uncached_rws.push(rw);
+                cold_hits += 1;
             }
         }
 
-        if uncached_ids.is_empty() { return out; }
+        if !uncached_ids.is_empty() {
+            // ── Phase 2: parallel mmap read + dequant + GEMV for uncached ──
+            // Raw pointer through usize for Send+Sync (mmap is read-only, concurrent reads safe)
+            let gu_addr = self.gu_mmaps[l].as_ptr() as usize;
+            let d_addr = self.down_mmaps[l].as_ptr() as usize;
 
-        // ── Phase 2: parallel mmap read + dequant + GEMV for uncached ──
-        // Raw pointer through usize for Send+Sync (mmap is read-only, concurrent reads safe)
-        let gu_addr = self.gu_mmaps[l].as_ptr() as usize;
-        let d_addr = self.down_mmaps[l].as_ptr() as usize;
+            let results: Vec<(Vec<f32>, (usize, usize), (Vec<f32>, Vec<f32>, Vec<f32>))> =
+                uncached_ids.par_iter().zip(uncached_rws.par_iter()).map(|(&eid, &rw)| {
+                    let gu_off = eid * 1_310_720;
+                    let d_off = eid * 655_360;
+                    let gu_ptr = unsafe { (gu_addr as *const u8).add(gu_off) };
+                    let d_ptr = unsafe { (d_addr as *const u8).add(d_off) };
+                    let (gate, up, down) = crate::moe_dispatch::dequantize_expert_f32(
+                        gu_ptr, 1_310_720, d_ptr, 655_360,
+                    );
 
-        let results: Vec<(Vec<f32>, (usize, usize), (Vec<f32>, Vec<f32>, Vec<f32>))> =
-            uncached_ids.par_iter().zip(uncached_rws.par_iter()).map(|(&eid, &rw)| {
-                let gu_off = eid * 1_310_720;
-                let d_off = eid * 655_360;
-                let gu_ptr = unsafe { (gu_addr as *const u8).add(gu_off) };
-                let d_ptr = unsafe { (d_addr as *const u8).add(d_off) };
-                let (gate, up, down) = crate::moe_dispatch::dequantize_expert_f32(
-                    gu_ptr, 1_310_720, d_ptr, 655_360,
-                );
+                    // GEMV with local scratch (allocation: ~8KB, vs SSD read: ~15ms)
+                    let mut gate_out = vec![0.0f32; 512];
+                    fill_gemv_f32(&mut gate_out, &gate, h, 512, HDIM);
+                    let mut up_out = vec![0.0f32; 512];
+                    fill_gemv_f32(&mut up_out, &up, h, 512, HDIM);
+                    let mut hidden = vec![0.0f32; 512];
+                    for i in 0..512 { hidden[i] = gate_out[i] / (1.0 + (-gate_out[i]).exp()) * up_out[i]; }
+                    let mut down_out = vec![0.0f32; HDIM];
+                    fill_gemv_f32(&mut down_out, &down, &hidden, HDIM, 512);
+                    for v in &mut down_out { *v *= rw; }
 
-                // GEMV with local scratch (allocation: ~8KB, vs SSD read: ~15ms)
-                let mut gate_out = vec![0.0f32; 512];
-                fill_gemv_f32(&mut gate_out, &gate, h, 512, HDIM);
-                let mut up_out = vec![0.0f32; 512];
-                fill_gemv_f32(&mut up_out, &up, h, 512, HDIM);
-                let mut hidden = vec![0.0f32; 512];
-                for i in 0..512 { hidden[i] = gate_out[i] / (1.0 + (-gate_out[i]).exp()) * up_out[i]; }
-                let mut down_out = vec![0.0f32; HDIM];
-                fill_gemv_f32(&mut down_out, &down, &hidden, HDIM, 512);
-                for v in &mut down_out { *v *= rw; }
+                    (down_out, (l, eid), (gate, up, down))
+                }).collect();
 
-                (down_out, (l, eid), (gate, up, down))
-            }).collect();
-
-        // ── Phase 3: sum outputs + update cache ──
-        for (output, key, entry) in results {
-            for i in 0..HDIM { out[i] += output[i]; }
-            self.expert_cache.insert(key, entry);
-            self.expert_cache_order.insert(0, key);
-        }
-        while self.expert_cache_order.len() > 50 {
-            if let Some(old_key) = self.expert_cache_order.pop() {
-                self.expert_cache.remove(&old_key);
+            // ── Phase 3: sum outputs + update cache ──
+            for (output, key, entry) in results {
+                for i in 0..HDIM { out[i] += output[i]; }
+                self.expert_cache.insert(key, entry);
+                self.expert_cache_order.insert(0, key);
             }
+            while self.expert_cache_order.len() > 50 {
+                if let Some(old_key) = self.expert_cache_order.pop() {
+                    self.expert_cache.remove(&old_key);
+                }
+            }
+        }
+
+        // Update stats
+        self.moe_stats[l].calls += 1;
+        self.moe_stats[l].total_executed_experts += n as u64;
+        self.moe_stats[l].total_warm_hit_count += warm_hits;
+        self.moe_stats[l].total_cold_hit_count += cold_hits;
+        self.moe_stats[l].total_bytes_read += uncached_ids.len() as u64 * (1_310_720 + 655_360);
+        self.moe_stats[l].last_selected_ids = eidx.iter().map(|&x| x as usize).collect();
+        self.moe_stats[l].last_selected_weights = ew.clone();
+        for &eid in &eidx {
+            self.moe_stats[l].unique_expert_ids.insert(eid as usize);
         }
 
         out
@@ -1544,7 +1946,8 @@ fn load_layer_weights(bin_dir: &Path, l: usize) -> Option<LayerWeights> {
 impl Qwen36Runner {
     /// Compute logits = embed @ hn, return top-k indices + values.
     /// Uses NEON+rayon for the massive matmul (248320 × 2048 = 509M FLOPs).
-    pub fn lm_head_topk(&self, hn: &[f32], top_k: usize) -> (Vec<i32>, Vec<f32>) {
+    pub fn lm_head_topk(&mut self, hn: &[f32], top_k: usize) -> (Vec<i32>, Vec<f32>) {
+        let t0 = std::time::Instant::now();
         let lm_head_mmap = self.lm_head.as_ref().unwrap_or(&self.embed);
         let vocab = lm_head_mmap.len() / (HDIM * 4); // f32 = 4 bytes
 
@@ -1564,12 +1967,15 @@ impl Qwen36Runner {
 
         let indices: Vec<i32> = indexed.iter().map(|(i, _)| *i as i32).collect();
         let values: Vec<f32> = indexed.iter().map(|(_, v)| *v).collect();
+        self.lm_head_calls += 1;
+        self.lm_head_wall_sec += t0.elapsed().as_secs_f64();
         (indices, values)
     }
 
     /// Compute logits = embed @ hn, return top-k indices + values + logit entropy.
     /// Shannon entropy is computed on the full vocab distribution in a single pass.
-    pub fn lm_head_topk_with_entropy(&self, hn: &[f32], top_k: usize) -> (Vec<i32>, Vec<f32>, f32) {
+    pub fn lm_head_topk_with_entropy(&mut self, hn: &[f32], top_k: usize) -> (Vec<i32>, Vec<f32>, f32) {
+        let t0 = std::time::Instant::now();
         let lm_head_mmap = self.lm_head.as_ref().unwrap_or(&self.embed);
         let vocab = lm_head_mmap.len() / (HDIM * 4); // f32 = 4 bytes
 
@@ -1603,7 +2009,39 @@ impl Qwen36Runner {
 
         let indices: Vec<i32> = indexed.iter().map(|(i, _)| *i as i32).collect();
         let values: Vec<f32> = indexed.iter().map(|(_, v)| *v).collect();
+        self.lm_head_calls += 1;
+        self.lm_head_wall_sec += t0.elapsed().as_secs_f64();
+
+        // Record trace endpoints if trace path is open
+        if self.record_trace_path.is_some() {
+            if let Some(ref mut step_trace) = self.current_step_trace {
+                step_trace.entropy = entropy;
+                step_trace.logits_topk_ids = indices.clone();
+                step_trace.logits_topk_values = values.clone();
+            }
+        }
+
         (indices, values, entropy)
+    }
+
+    pub fn finish_step(&mut self) {
+        if let Some(path) = &self.record_trace_path {
+            if let Some(ref trace) = self.current_step_trace {
+                if let Ok(json_line) = serde_json::to_string(trace) {
+                    use std::io::Write;
+                    // Append json line to the record file
+                    if let Ok(mut file) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(path)
+                    {
+                        let _ = writeln!(file, "{}", json_line);
+                    }
+                }
+            }
+        }
+        self.current_step_trace = None;
+        self.step_counter += 1;
     }
 }
 
@@ -1788,7 +2226,6 @@ pub extern "C" fn lko_runner_forward_n(
     HDIM as i32
 }
 
-/// Compute lm_head + top-k in Rust. Returns top_k indices/values via output buffers.
 #[no_mangle]
 pub extern "C" fn lko_runner_lm_head(
     hn: *const f32,
@@ -1796,7 +2233,7 @@ pub extern "C" fn lko_runner_lm_head(
     indices_out: *mut i32,
     values_out: *mut f32,
 ) -> i32 {
-    let runner = unsafe { RUNNER.as_ref() }.expect("runner not initialized");
+    let runner = unsafe { RUNNER.as_mut() }.expect("runner not initialized");
     let h_slice = unsafe { std::slice::from_raw_parts(hn, HDIM) };
     let (indices, values) = runner.lm_head_topk(h_slice, top_k as usize);
     let k = indices.len().min(top_k as usize);
@@ -1846,6 +2283,7 @@ pub extern "C" fn lko_runner_step(
         std::ptr::copy_nonoverlapping(indices.as_ptr(), indices_out, k);
         std::ptr::copy_nonoverlapping(values.as_ptr(), values_out, k);
     }
+    runner.finish_step();
     k as i32
 }
 
@@ -1874,6 +2312,7 @@ pub extern "C" fn lko_runner_step_with_entropy(
         std::ptr::copy_nonoverlapping(values.as_ptr(), values_out, k);
         *entropy_out = entropy;
     }
+    runner.finish_step();
     k as i32
 }
 
@@ -2141,4 +2580,341 @@ pub extern "C" fn lko_runner_trace_layer_components(
     }
 
     -1
+}
+
+#[no_mangle]
+pub extern "C" fn lko_runner_set_force_attn_full(enabled: i32) -> i32 {
+    unsafe {
+        if let Some(r) = RUNNER.as_mut() {
+            r.debug_force_attn_full = enabled != 0;
+            1
+        } else {
+            0
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn lko_runner_set_force_moe_skip(enabled: i32) -> i32 {
+    unsafe {
+        if let Some(r) = RUNNER.as_mut() {
+            r.debug_force_moe_skip = enabled != 0;
+            1
+        } else {
+            0
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn lko_runner_set_trace_record(path: *const std::os::raw::c_char) -> i32 {
+    unsafe {
+        if let Some(r) = RUNNER.as_mut() {
+            if path.is_null() {
+                r.record_trace_path = None;
+            } else {
+                let c_str = std::ffi::CStr::from_ptr(path);
+                if let Ok(s) = c_str.to_str() {
+                    r.record_trace_path = Some(s.to_string());
+                } else {
+                    return 0;
+                }
+            }
+            1
+        } else {
+            0
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn lko_runner_set_trace_replay(path: *const std::os::raw::c_char) -> i32 {
+    unsafe {
+        if let Some(r) = RUNNER.as_mut() {
+            if path.is_null() {
+                r.replay_traces = None;
+            } else {
+                let c_str = std::ffi::CStr::from_ptr(path);
+                if let Ok(s) = c_str.to_str() {
+                    if let Ok(file) = std::fs::File::open(s) {
+                        let reader = std::io::BufReader::new(file);
+                        let mut traces = Vec::new();
+                        use std::io::BufRead;
+                        for line in reader.lines() {
+                            if let Ok(line_str) = line {
+                                if let Ok(trace) = serde_json::from_str::<StepTrace>(&line_str) {
+                                    traces.push(trace);
+                                }
+                            }
+                        }
+                        r.replay_traces = Some(traces);
+                    } else {
+                        return 0;
+                    }
+                } else {
+                    return 0;
+                }
+            }
+            1
+        } else {
+            0
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn lko_runner_set_moe_top_p(p: f32) -> i32 {
+    unsafe {
+        if let Some(r) = RUNNER.as_mut() {
+            r.moe_top_p = p;
+            1
+        } else {
+            0
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn lko_runner_set_moe_prune_mode(mode: i32) -> i32 {
+    unsafe {
+        if let Some(r) = RUNNER.as_mut() {
+            r.moe_prune_mode = mode;
+            1
+        } else {
+            0
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn lko_runner_set_moe_contrib_threshold(threshold: f32) -> i32 {
+    unsafe {
+        if let Some(r) = RUNNER.as_mut() {
+            r.moe_contrib_threshold = threshold;
+            1
+        } else {
+            0
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn lko_runner_set_moe_min_experts(min_experts: i32) -> i32 {
+    unsafe {
+        if let Some(r) = RUNNER.as_mut() {
+            r.min_experts = min_experts as usize;
+            1
+        } else {
+            0
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn lko_runner_set_moe_max_experts(max_experts: i32) -> i32 {
+    unsafe {
+        if let Some(r) = RUNNER.as_mut() {
+            r.max_experts = max_experts as usize;
+            1
+        } else {
+            0
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn lko_runner_set_expert_policy_json(json_ptr: *const std::os::raw::c_char) -> i32 {
+    unsafe {
+        if let Some(r) = RUNNER.as_mut() {
+            if json_ptr.is_null() {
+                r.set_expert_policy(crate::strategy::ExpertPolicyConfig::Exact);
+                1
+            } else {
+                let c_str = std::ffi::CStr::from_ptr(json_ptr);
+                if let Ok(s) = c_str.to_str() {
+                    if let Ok(policy) = crate::strategy::parse_expert_policy_json(s) {
+                        r.set_expert_policy(policy);
+                        1
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                }
+            }
+        } else {
+            0
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn lko_runner_reset_moe_stats() -> i32 {
+    unsafe {
+        if let Some(r) = RUNNER.as_mut() {
+            for s in &mut r.moe_stats {
+                *s = MoELayerStats::default();
+            }
+            for s in &mut r.forward_stats {
+                *s = ForwardLayerStats::default();
+            }
+            r.lm_head_calls = 0;
+            r.lm_head_wall_sec = 0.0;
+            r.forward_calls = 0;
+            r.forward_wall_sec = 0.0;
+            1
+        } else {
+            0
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn lko_runner_get_moe_stats_json() -> *mut std::os::raw::c_char {
+    unsafe {
+        match &RUNNER {
+            Some(r) => {
+                let mut layers = Vec::with_capacity(r.moe_stats.len());
+                for (layer_idx, s) in r.moe_stats.iter().enumerate() {
+                    layers.push(serde_json::json!({
+                        "layer": layer_idx,
+                        "calls": s.calls,
+                        "avg_executed_experts": if s.calls > 0 { s.total_executed_experts as f64 / s.calls as f64 } else { 0.0 },
+                        "avg_executed_mass": if s.calls > 0 { s.total_executed_mass / s.calls as f64 } else { 0.0 },
+                        "avg_dropped_mass": if s.calls > 0 { s.total_dropped_mass / s.calls as f64 } else { 0.0 },
+                        "avg_load_count": if s.calls > 0 { s.total_load_count as f64 / s.calls as f64 } else { 0.0 },
+                        "avg_warm_hit_count": if s.calls > 0 { s.total_warm_hit_count as f64 / s.calls as f64 } else { 0.0 },
+                        "avg_cold_hit_count": if s.calls > 0 { s.total_cold_hit_count as f64 / s.calls as f64 } else { 0.0 },
+                        "avg_compute_ms": if s.calls > 0 { (s.total_compute_sec * 1000.0) / s.calls as f64 } else { 0.0 },
+                        "avg_bytes_read": if s.calls > 0 { s.total_bytes_read as f64 / s.calls as f64 } else { 0.0 },
+                        "avg_router_ms": if s.calls > 0 { (s.total_router_sec * 1000.0) / s.calls as f64 } else { 0.0 },
+                        "avg_expert_select_ms": if s.calls > 0 { (s.total_select_sec * 1000.0) / s.calls as f64 } else { 0.0 },
+                        "avg_expert_load_ms": if s.calls > 0 { (s.total_load_sec * 1000.0) / s.calls as f64 } else { 0.0 },
+                        "avg_dequant_ms": if s.calls > 0 { (s.total_dequant_sec * 1000.0) / s.calls as f64 } else { 0.0 },
+                        "avg_gemv_ms": if s.calls > 0 { (s.total_gemv_sec * 1000.0) / s.calls as f64 } else { 0.0 },
+                        "avg_accumulate_ms": if s.calls > 0 { (s.total_accumulate_sec * 1000.0) / s.calls as f64 } else { 0.0 },
+                        "avg_shared_ms": if s.shared_calls > 0 { (s.total_shared_sec * 1000.0) / s.shared_calls as f64 } else { 0.0 },
+                        "avg_router_wall_ms": if s.calls > 0 { (s.total_router_wall_sec * 1000.0) / s.calls as f64 } else { 0.0 },
+                        "avg_select_wall_ms": if s.calls > 0 { (s.total_select_wall_sec * 1000.0) / s.calls as f64 } else { 0.0 },
+                        "avg_load_wall_ms": if s.calls > 0 { (s.total_load_wall_sec * 1000.0) / s.calls as f64 } else { 0.0 },
+                        "avg_exec_wall_ms": if s.calls > 0 { (s.total_exec_wall_sec * 1000.0) / s.calls as f64 } else { 0.0 },
+                        "avg_accumulate_wall_ms": if s.calls > 0 { (s.total_accumulate_wall_sec * 1000.0) / s.calls as f64 } else { 0.0 },
+                        "unique_expert_ids": s.unique_expert_ids.iter().copied().collect::<Vec<_>>(),
+                        "last_expert_ids": s.last_expert_ids.clone(),
+                        "last_router_top8_ids": s.last_router_top8_ids.clone(),
+                        "last_router_top8_weights": s.last_router_top8_weights.clone(),
+                        "last_candidate_ids": s.last_candidate_ids.clone(),
+                        "last_candidate_weights": s.last_candidate_weights.clone(),
+                        "last_selected_ids": s.last_selected_ids.clone(),
+                        "last_selected_weights": s.last_selected_weights.clone(),
+                        "last_dispatch_ids": s.last_dispatch_ids.clone(),
+                        "last_dispatch_weights": s.last_dispatch_weights.clone(),
+                        "last_selected_count": s.last_selected_count,
+                        "last_selected_renormalized": s.last_selected_renormalized,
+                    }));
+                }
+                let total_calls: u64 = r.moe_stats.iter().map(|s| s.calls).sum();
+                let total_exec: u64 = r.moe_stats.iter().map(|s| s.total_executed_experts).sum();
+                let total_mass: f64 = r.moe_stats.iter().map(|s| s.total_executed_mass).sum();
+                let total_drop: f64 = r.moe_stats.iter().map(|s| s.total_dropped_mass).sum();
+                let total_loads: u64 = r.moe_stats.iter().map(|s| s.total_load_count).sum();
+                let total_warm_hits: u64 = r.moe_stats.iter().map(|s| s.total_warm_hit_count).sum();
+                let total_cold_hits: u64 = r.moe_stats.iter().map(|s| s.total_cold_hit_count).sum();
+                let total_sec: f64 = r.moe_stats.iter().map(|s| s.total_compute_sec).sum();
+                let total_bytes: u64 = r.moe_stats.iter().map(|s| s.total_bytes_read).sum();
+                let total_router_sec: f64 = r.moe_stats.iter().map(|s| s.total_router_sec).sum();
+                let total_select_sec: f64 = r.moe_stats.iter().map(|s| s.total_select_sec).sum();
+                let total_load_sec: f64 = r.moe_stats.iter().map(|s| s.total_load_sec).sum();
+                let total_dequant_sec: f64 = r.moe_stats.iter().map(|s| s.total_dequant_sec).sum();
+                let total_gemv_sec: f64 = r.moe_stats.iter().map(|s| s.total_gemv_sec).sum();
+                let total_accumulate_sec: f64 =
+                    r.moe_stats.iter().map(|s| s.total_accumulate_sec).sum();
+                let total_shared_calls: u64 = r.moe_stats.iter().map(|s| s.shared_calls).sum();
+                let total_shared_sec: f64 = r.moe_stats.iter().map(|s| s.total_shared_sec).sum();
+                let total_router_wall_sec: f64 =
+                    r.moe_stats.iter().map(|s| s.total_router_wall_sec).sum();
+                let total_select_wall_sec: f64 =
+                    r.moe_stats.iter().map(|s| s.total_select_wall_sec).sum();
+                let total_load_wall_sec: f64 =
+                    r.moe_stats.iter().map(|s| s.total_load_wall_sec).sum();
+                let total_exec_wall_sec: f64 =
+                    r.moe_stats.iter().map(|s| s.total_exec_wall_sec).sum();
+                let total_accumulate_wall_sec: f64 = r
+                    .moe_stats
+                    .iter()
+                    .map(|s| s.total_accumulate_wall_sec)
+                    .sum();
+                let forward_layers: Vec<_> = r.forward_stats.iter().enumerate().map(|(layer_idx, s)| serde_json::json!({
+                    "layer": layer_idx,
+                    "calls": s.calls,
+                    "avg_layer_wall_ms": if s.calls > 0 { (s.total_layer_wall_sec * 1000.0) / s.calls as f64 } else { 0.0 },
+                    "avg_deltanet_wall_ms": if s.calls > 0 { (s.total_deltanet_wall_sec * 1000.0) / s.calls as f64 } else { 0.0 },
+                    "avg_gqa_wall_ms": if s.calls > 0 { (s.total_gqa_wall_sec * 1000.0) / s.calls as f64 } else { 0.0 },
+                    "avg_shared_wall_ms": if s.calls > 0 { (s.total_shared_wall_sec * 1000.0) / s.calls as f64 } else { 0.0 },
+                    "avg_moe_wall_ms": if s.calls > 0 { (s.total_moe_wall_sec * 1000.0) / s.calls as f64 } else { 0.0 },
+                })).collect();
+                let total_layer_calls: u64 = r.forward_stats.iter().map(|s| s.calls).sum();
+                let total_layer_wall_sec: f64 =
+                    r.forward_stats.iter().map(|s| s.total_layer_wall_sec).sum();
+                let total_layer_moe_wall_sec: f64 =
+                    r.forward_stats.iter().map(|s| s.total_moe_wall_sec).sum();
+                let json = serde_json::json!({
+                    "summary": {
+                        "total_calls": total_calls,
+                        "avg_executed_experts": if total_calls > 0 { total_exec as f64 / total_calls as f64 } else { 0.0 },
+                        "avg_executed_mass": if total_calls > 0 { total_mass / total_calls as f64 } else { 0.0 },
+                        "avg_dropped_mass": if total_calls > 0 { total_drop / total_calls as f64 } else { 0.0 },
+                        "avg_load_count": if total_calls > 0 { total_loads as f64 / total_calls as f64 } else { 0.0 },
+                        "avg_warm_hit_count": if total_calls > 0 { total_warm_hits as f64 / total_calls as f64 } else { 0.0 },
+                        "avg_cold_hit_count": if total_calls > 0 { total_cold_hits as f64 / total_calls as f64 } else { 0.0 },
+                        "avg_compute_ms": if total_calls > 0 { (total_sec * 1000.0) / total_calls as f64 } else { 0.0 },
+                        "avg_bytes_read": if total_calls > 0 { total_bytes as f64 / total_calls as f64 } else { 0.0 },
+                        "avg_router_ms": if total_calls > 0 { (total_router_sec * 1000.0) / total_calls as f64 } else { 0.0 },
+                        "avg_expert_select_ms": if total_calls > 0 { (total_select_sec * 1000.0) / total_calls as f64 } else { 0.0 },
+                        "avg_expert_load_ms": if total_calls > 0 { (total_load_sec * 1000.0) / total_calls as f64 } else { 0.0 },
+                        "avg_dequant_ms": if total_calls > 0 { (total_dequant_sec * 1000.0) / total_calls as f64 } else { 0.0 },
+                        "avg_gemv_ms": if total_calls > 0 { (total_gemv_sec * 1000.0) / total_calls as f64 } else { 0.0 },
+                        "avg_accumulate_ms": if total_calls > 0 { (total_accumulate_sec * 1000.0) / total_calls as f64 } else { 0.0 },
+                        "avg_shared_ms": if total_shared_calls > 0 { (total_shared_sec * 1000.0) / total_shared_calls as f64 } else { 0.0 },
+                        "avg_router_wall_ms": if total_calls > 0 { (total_router_wall_sec * 1000.0) / total_calls as f64 } else { 0.0 },
+                        "avg_select_wall_ms": if total_calls > 0 { (total_select_wall_sec * 1000.0) / total_calls as f64 } else { 0.0 },
+                        "avg_load_wall_ms": if total_calls > 0 { (total_load_wall_sec * 1000.0) / total_calls as f64 } else { 0.0 },
+                        "avg_exec_wall_ms": if total_calls > 0 { (total_exec_wall_sec * 1000.0) / total_calls as f64 } else { 0.0 },
+                        "avg_accumulate_wall_ms": if total_calls > 0 { (total_accumulate_wall_sec * 1000.0) / total_calls as f64 } else { 0.0 },
+                    },
+                    "forward_summary": {
+                        "forward_calls": r.forward_calls,
+                        "layer_calls": total_layer_calls,
+                        "avg_forward_wall_ms": if r.forward_calls > 0 { (r.forward_wall_sec * 1000.0) / r.forward_calls as f64 } else { 0.0 },
+                        "avg_lm_head_wall_ms": if r.lm_head_calls > 0 { (r.lm_head_wall_sec * 1000.0) / r.lm_head_calls as f64 } else { 0.0 },
+                        "avg_layer_wall_ms": if total_layer_calls > 0 { (total_layer_wall_sec * 1000.0) / total_layer_calls as f64 } else { 0.0 },
+                        "avg_moe_wall_ms_per_layer": if total_layer_calls > 0 { (total_layer_moe_wall_sec * 1000.0) / total_layer_calls as f64 } else { 0.0 },
+                        "avg_moe_wall_ms_per_token": if r.forward_calls > 0 { (total_layer_moe_wall_sec * 1000.0) / r.forward_calls as f64 } else { 0.0 },
+                    },
+                    "layers": layers,
+                    "forward_layers": forward_layers,
+                    "effective_policy": {
+                        "name": match &r.expert_policy {
+                            crate::strategy::ExpertPolicyConfig::Exact => "exact",
+                            crate::strategy::ExpertPolicyConfig::TopP { .. } => "top_p",
+                            crate::strategy::ExpertPolicyConfig::Contribution { .. } => "contribution",
+                            crate::strategy::ExpertPolicyConfig::AdaptiveEntropy { .. } => "adaptive_entropy",
+                        },
+                        "config": &r.expert_policy,
+                    },
+                }).to_string();
+                std::ffi::CString::new(json).unwrap().into_raw()
+            }
+            None => std::ptr::null_mut(),
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn lko_runner_free_moe_stats_json(ptr: *mut std::os::raw::c_char) {
+    if !ptr.is_null() {
+        unsafe {
+            let _ = std::ffi::CString::from_raw(ptr);
+        }
+    }
 }

@@ -1,0 +1,23 @@
+{
+  "fusion_ratio": 0.80,
+  "moe_on_deltanet": 1,
+  "expert_policy": {
+    "kind": "adaptive_entropy",
+    "low_entropy_p": 0.90,
+    "mid_entropy_p": 0.90,
+    "high_entropy_p": 0.90,
+    "repetition_p": 0.90,
+    "low_entropy_threshold": 0.15,
+    "mid_entropy_threshold": 0.50,
+    "min_experts": 2,
+    "max_experts": 8
+  },
+  "moe_prune_mode": "top_p",
+  "moe_top_p": 0.90,
+  "moe_contrib_threshold": 1.0,
+  "expert_cache_mb": 4096,
+  "timing": true,
+  "trace": false,
+  "max_experts": 8,
+  "min_experts": 2
+}

@@ -1,0 +1,33 @@
+{
+  "prompt": "The capital of France is",
+  "tokenizer_ids": [
+    760,
+    6511,
+    314,
+    9338,
+    369
+  ],
+  "expected_top10_ids": [
+    11751,
+    264,
+    3750,
+    279,
+    198,
+    271,
+    799,
+    7172,
+    34756,
+    3428
+  ],
+  "expected_entropy": 9.366231918334961,
+  "expected_entropy_range": [
+    9.31623191833496,
+    9.416231918334962
+  ],
+  "expected_hidden_norm": 67.76890563964844,
+  "expected_hidden_norm_range": [
+    67.66890563964844,
+    67.86890563964843
+  ],
+  "expected_first_token_id": 11751
+}

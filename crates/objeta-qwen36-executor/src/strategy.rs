@@ -6,8 +6,67 @@
 //! Weights are stored as f16 (u16). Requantization simulates lower precision
 //! by rounding values to N-bit quantization levels.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ExpertPolicyConfig {
+    #[serde(rename = "exact")]
+    Exact,
+    #[serde(rename = "top_p")]
+    TopP {
+        p: f32,
+        min_experts: usize,
+        max_experts: usize,
+    },
+    #[serde(rename = "contribution")]
+    Contribution {
+        threshold: f32,
+        min_experts: usize,
+        max_experts: usize,
+        #[serde(default = "default_ema_beta")]
+        ema_beta: f32,
+    },
+    #[serde(rename = "adaptive_entropy")]
+    AdaptiveEntropy {
+        low_entropy_p: f32,
+        mid_entropy_p: f32,
+        high_entropy_p: f32,
+        repetition_p: f32,
+        low_entropy_threshold: f32,
+        mid_entropy_threshold: f32,
+        min_experts: usize,
+        max_experts: usize,
+    },
+}
+
+impl Default for ExpertPolicyConfig {
+    fn default() -> Self {
+        Self::Exact
+    }
+}
+
+pub fn parse_expert_policy_json(json: &str) -> Result<ExpertPolicyConfig, serde_json::Error> {
+    match serde_json::from_str::<ExpertPolicyConfig>(json) {
+        Ok(policy) => Ok(policy),
+        Err(first_err) => {
+            let mut value: serde_json::Value = serde_json::from_str(json)?;
+            if let Some(obj) = value.as_object_mut() {
+                if !obj.contains_key("type") {
+                    if let Some(kind) = obj.get("kind").cloned() {
+                        obj.insert("type".to_string(), kind);
+                    }
+                }
+            }
+            serde_json::from_value::<ExpertPolicyConfig>(value).map_err(|_| first_err)
+        }
+    }
+}
+
+fn default_ema_beta() -> f32 {
+    0.95
+}
 
 /// Mirror of objeta_core::RuntimeStrategy — minimal fields for executor.
 #[derive(Debug, Deserialize)]

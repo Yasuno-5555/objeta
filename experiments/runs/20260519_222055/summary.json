@@ -1,0 +1,25 @@
+{
+  "tok_per_sec": 0.26726852152303665,
+  "avg_entropy": 3.8717780113220215,
+  "first_repetition": null,
+  "first_garbage": null,
+  "cache_stats": {
+    "capacity_bytes": 536870912,
+    "resident_bytes": 536739840,
+    "warm_hit_count": 8003,
+    "cold_load_count": 1597,
+    "eviction_count": 1324,
+    "bytes_loaded_actual": 3139829760,
+    "warm_hit_rate": 83.36458333333333
+  },
+  "wall_timing": {
+    "total_decode_wall_s": 18.707777375006117,
+    "avg_forward_wall_ms": 1181.8349836,
+    "avg_moe_wall_ms_per_token": 0.0,
+    "avg_moe_router_wall_ms": 0.0,
+    "avg_moe_select_wall_ms": 0.0,
+    "avg_moe_load_wall_ms": 0.0,
+    "avg_moe_exec_wall_ms": 18.902157440000003,
+    "avg_moe_accumulate_wall_ms": 0.012150779999999998
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "prompt": "The capital of France is",
+  "prompt_mode": "chat_template",
+  "model_input_text": "<|im_start|>user\nThe capital of France is<|im_end|>\n<|im_start|>assistant\n<think>\n",
+  "tokenizer_ids": [
+    248045,
+    846,
+    198,
+    760,
+    6511,
+    314,
+    9338,
+    369,
+    248046,
+    198,
+    248045,
+    74455,
+    198,
+    248068,
+    198
+  ],
+  "expected_top10_ids": [
+    8160,
+    90700,
+    77264,
+    31248,
+    760,
+    97237,
+    79420,
+    1421,
+    7047,
+    5514
+  ],
+  "expected_entropy": 0.9444859623908997,
+  "expected_entropy_range": [
+    0.8944859623908996,
+    0.9944859623908997
+  ],
+  "expected_hidden_norm": 73.51302337646484,
+  "expected_hidden_norm_range": [
+    73.41302337646485,
+    73.61302337646484
+  ],
+  "expected_first_token_id": 8160
+}

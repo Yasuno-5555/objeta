@@ -166,6 +166,7 @@ def main():
                 strategy_dict.update(json.load(f))
         else:
             print(f"Warning: strategy config file '{strat_path}' not found. Using defaults.")
+    strategy_hash = hashlib.sha256(json.dumps(strategy_dict, sort_keys=True).encode("utf-8")).hexdigest()
 
     # Init caches & configure runner
     if hasattr(lib, "lko_moe_init_page_cache"):
@@ -394,6 +395,10 @@ def main():
             prompt_mode=prompt_mode,
             model_input_text=model_input_text,
             tokenizer_ids=ids,
+            strategy_hash=strategy_hash,
+            config_hash=integrity_hashes["config_hash"],
+            lm_head_hash=integrity_hashes["lm_head_hash"],
+            embed_hash=integrity_hashes["embed_hash"],
         )
         sys.exit(0)
 

@@ -26,7 +26,13 @@
       198,
       248068,
       198
-    ]
+    ],
+    "golden_name": "exact_good_prefill",
+    "strategy_name": "configs/safe_exact.json",
+    "strategy_hash": "2b47de0e15e041526ca8abeaf96532a19f480f1da99f22b6c8d18e5be69cb1da",
+    "config_hash": "93a4693fa9d8392fbfccd4b3c9873f4bfdcb14fdede978b123d07d19675efe99",
+    "lm_head_hash": "536af56f81e8296694ed1c781662b2a4a3b98ba7a85aedd8261c2baef2a9f21f",
+    "embed_hash": "f2f0bdf743ebef76c4a3e8053b20f975ed2635f44bc756f64947013bf0945e74"
   },
   "exact_good_layer_trace": {
     "model_id": "Qwen3.6-35B-A3B",
@@ -55,7 +61,13 @@
       198,
       248068,
       198
-    ]
+    ],
+    "golden_name": "exact_good_layer_trace",
+    "strategy_name": "configs/safe_exact.json",
+    "strategy_hash": "2b47de0e15e041526ca8abeaf96532a19f480f1da99f22b6c8d18e5be69cb1da",
+    "config_hash": "93a4693fa9d8392fbfccd4b3c9873f4bfdcb14fdede978b123d07d19675efe99",
+    "lm_head_hash": "536af56f81e8296694ed1c781662b2a4a3b98ba7a85aedd8261c2baef2a9f21f",
+    "embed_hash": "f2f0bdf743ebef76c4a3e8053b20f975ed2635f44bc756f64947013bf0945e74"
   },
   "exact_good_1token": {
     "model_id": "Qwen3.6-35B-A3B",
@@ -84,7 +96,13 @@
       198,
       248068,
       198
-    ]
+    ],
+    "golden_name": "exact_good_1token",
+    "strategy_name": "configs/safe_exact.json",
+    "strategy_hash": "2b47de0e15e041526ca8abeaf96532a19f480f1da99f22b6c8d18e5be69cb1da",
+    "config_hash": "93a4693fa9d8392fbfccd4b3c9873f4bfdcb14fdede978b123d07d19675efe99",
+    "lm_head_hash": "536af56f81e8296694ed1c781662b2a4a3b98ba7a85aedd8261c2baef2a9f21f",
+    "embed_hash": "f2f0bdf743ebef76c4a3e8053b20f975ed2635f44bc756f64947013bf0945e74"
   },
   "safe_exact_chat_prefill": {
     "model_id": "Qwen3.6-35B-A3B",
@@ -113,7 +131,13 @@
       198,
       248068,
       198
-    ]
+    ],
+    "golden_name": "safe_exact_chat_prefill",
+    "strategy_name": "configs/safe_exact.json",
+    "strategy_hash": "2b47de0e15e041526ca8abeaf96532a19f480f1da99f22b6c8d18e5be69cb1da",
+    "config_hash": "93a4693fa9d8392fbfccd4b3c9873f4bfdcb14fdede978b123d07d19675efe99",
+    "lm_head_hash": "536af56f81e8296694ed1c781662b2a4a3b98ba7a85aedd8261c2baef2a9f21f",
+    "embed_hash": "f2f0bdf743ebef76c4a3e8053b20f975ed2635f44bc756f64947013bf0945e74"
   },
   "safe_exact_chat_1token": {
     "model_id": "Qwen3.6-35B-A3B",
@@ -142,7 +166,13 @@
       198,
       248068,
       198
-    ]
+    ],
+    "golden_name": "safe_exact_chat_1token",
+    "strategy_name": "configs/safe_exact.json",
+    "strategy_hash": "2b47de0e15e041526ca8abeaf96532a19f480f1da99f22b6c8d18e5be69cb1da",
+    "config_hash": "93a4693fa9d8392fbfccd4b3c9873f4bfdcb14fdede978b123d07d19675efe99",
+    "lm_head_hash": "536af56f81e8296694ed1c781662b2a4a3b98ba7a85aedd8261c2baef2a9f21f",
+    "embed_hash": "f2f0bdf743ebef76c4a3e8053b20f975ed2635f44bc756f64947013bf0945e74"
   },
   "safe_exact_chat_layer_trace": {
     "model_id": "Qwen3.6-35B-A3B",
@@ -171,6 +201,12 @@
       198,
       248068,
       198
-    ]
+    ],
+    "golden_name": "safe_exact_chat_layer_trace",
+    "strategy_name": "configs/safe_exact.json",
+    "strategy_hash": "2b47de0e15e041526ca8abeaf96532a19f480f1da99f22b6c8d18e5be69cb1da",
+    "config_hash": "93a4693fa9d8392fbfccd4b3c9873f4bfdcb14fdede978b123d07d19675efe99",
+    "lm_head_hash": "536af56f81e8296694ed1c781662b2a4a3b98ba7a85aedd8261c2baef2a9f21f",
+    "embed_hash": "f2f0bdf743ebef76c4a3e8053b20f975ed2635f44bc756f64947013bf0945e74"
   }
 }

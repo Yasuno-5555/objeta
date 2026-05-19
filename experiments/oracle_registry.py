@@ -25,6 +25,10 @@ def calculate_file_sha256(filepath):
     except Exception:
         return "error"
 
+
+def calculate_string_sha256(text):
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
 def get_model_integrity_hashes(tok_dir, bin_dir):
     tok_path = Path(tok_dir)
     bin_path = Path(bin_dir)
@@ -69,11 +73,17 @@ def register_golden(
     prompt_mode=None,
     model_input_text=None,
     tokenizer_ids=None,
+    strategy_hash=None,
+    config_hash=None,
+    lm_head_hash=None,
+    embed_hash=None,
 ):
     registry = load_registry()
     registry[golden_name] = {
+        "golden_name": golden_name,
         "model_id": model_id,
         "strategy": strategy_name,
+        "strategy_name": strategy_name,
         "prompt": prompt,
         "prompt_hash": prompt_hash,
         "git_commit": git_commit,
@@ -87,6 +97,16 @@ def register_golden(
         registry[golden_name]["model_input_text"] = model_input_text
     if tokenizer_ids is not None:
         registry[golden_name]["tokenizer_ids"] = tokenizer_ids
+    if strategy_hash is None and strategy_name is not None:
+        strategy_hash = calculate_string_sha256(strategy_name)
+    if strategy_hash is not None:
+        registry[golden_name]["strategy_hash"] = strategy_hash
+    if config_hash is not None:
+        registry[golden_name]["config_hash"] = config_hash
+    if lm_head_hash is not None:
+        registry[golden_name]["lm_head_hash"] = lm_head_hash
+    if embed_hash is not None:
+        registry[golden_name]["embed_hash"] = embed_hash
     save_registry(registry)
     print(f"Registered '{golden_name}' in golden registry.")
 

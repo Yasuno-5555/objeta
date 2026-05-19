@@ -1,0 +1,160 @@
+{
+  "config": {
+    "model": "Qwen3.6-35B-A3B",
+    "family": "spherical_steering",
+    "fusion_ratio": 1.0,
+    "moe_on_deltanet": true,
+    "max_tokens": 3,
+    "temperature": 0.7
+  },
+  "results": [
+    {
+      "model": "Qwen3.6-35B-A3B",
+      "prompt": "The meaning of life is",
+      "n_prompt": 15,
+      "n_generated": 3,
+      "total_s": 73.54,
+      "prefill_s": 372.0,
+      "tok_per_s": 0.04,
+      "avg_entropy": 12.121195,
+      "avg_steering": 0.005809,
+      "token_classes": {
+        "default": 3
+      },
+      "class_oscillations": 0,
+      "collapse_events": 0,
+      "output": "\u0131r\u91cc\u6709\u5176\u81ea\u7136",
+      "token_metrics": [
+        {
+          "step": 0,
+          "token_id": 28277,
+          "entropy": 12.13278,
+          "steering": 0.0,
+          "token_class": "default",
+          "collapse": "healthy",
+          "precision": 8,
+          "is_repeat": false
+        },
+        {
+          "step": 1,
+          "token_id": 112511,
+          "entropy": 12.119682,
+          "steering": 0.00847,
+          "token_class": "default",
+          "collapse": "healthy",
+          "precision": 8,
+          "is_repeat": false
+        },
+        {
+          "step": 2,
+          "token_id": 107450,
+          "entropy": 12.111124,
+          "steering": 0.008958,
+          "token_class": "default",
+          "collapse": "healthy",
+          "precision": 8,
+          "is_repeat": false
+        }
+      ]
+    },
+    {
+      "model": "Qwen3.6-35B-A3B",
+      "prompt": "Explain quantum computing simply:",
+      "n_prompt": 16,
+      "n_generated": 3,
+      "total_s": 59.21,
+      "prefill_s": 470.5,
+      "tok_per_s": 0.05,
+      "avg_entropy": 12.125188,
+      "avg_steering": 0.005538,
+      "token_classes": {
+        "default": 2,
+        "repetitive": 1
+      },
+      "class_oscillations": 2,
+      "collapse_events": 0,
+      "output": "\u8715\u53d8\u8715\u53d8 scom",
+      "token_metrics": [
+        {
+          "step": 0,
+          "token_id": 125094,
+          "entropy": 12.123112,
+          "steering": 0.0,
+          "token_class": "default",
+          "collapse": "healthy",
+          "precision": 8,
+          "is_repeat": false
+        },
+        {
+          "step": 1,
+          "token_id": 125094,
+          "entropy": 12.131296,
+          "steering": 0.011973,
+          "token_class": "repetitive",
+          "collapse": "healthy",
+          "precision": 8,
+          "is_repeat": true
+        },
+        {
+          "step": 2,
+          "token_id": 164089,
+          "entropy": 12.121155,
+          "steering": 0.004642,
+          "token_class": "default",
+          "collapse": "healthy",
+          "precision": 8,
+          "is_repeat": false
+        }
+      ]
+    },
+    {
+      "model": "Qwen3.6-35B-A3B",
+      "prompt": "Once upon a time in a distant galaxy,",
+      "n_prompt": 19,
+      "n_generated": 3,
+      "total_s": 96.87,
+      "prefill_s": 378.6,
+      "tok_per_s": 0.03,
+      "avg_entropy": 12.114919,
+      "avg_steering": 0.017305,
+      "token_classes": {
+        "default": 3
+      },
+      "class_oscillations": 0,
+      "collapse_events": 0,
+      "output": " dorm sabotagepest",
+      "token_metrics": [
+        {
+          "step": 0,
+          "token_id": 28158,
+          "entropy": 12.108917,
+          "steering": 0.0,
+          "token_class": "default",
+          "collapse": "healthy",
+          "precision": 8,
+          "is_repeat": false
+        },
+        {
+          "step": 1,
+          "token_id": 76908,
+          "entropy": 12.127877,
+          "steering": 0.02582,
+          "token_class": "default",
+          "collapse": "healthy",
+          "precision": 8,
+          "is_repeat": false
+        },
+        {
+          "step": 2,
+          "token_id": 28170,
+          "entropy": 12.107963,
+          "steering": 0.026095,
+          "token_class": "default",
+          "collapse": "healthy",
+          "precision": 8,
+          "is_repeat": false
+        }
+      ]
+    }
+  ]
+}

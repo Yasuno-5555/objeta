@@ -171,7 +171,7 @@ mod tests {
         let router: Vec<f32> = (0..N_EXPERTS * HIDDEN_DIM)
             .map(|i| ((i as f32) * 0.001).sin())
             .collect();
-        let (indices, weights) = router_topk(&router, &x.repeat(HIDDEN_DIM / K)[..HIDDEN_DIM], TOP_K);
+        let (indices, weights) = router_topk_cpu(&router, &x.repeat(HIDDEN_DIM / K)[..HIDDEN_DIM], TOP_K);
         assert_eq!(indices.len(), TOP_K);
         assert!((weights.iter().sum::<f32>() - 1.0).abs() < 0.01);
     }
@@ -248,6 +248,11 @@ pub fn router_topk_adaptive(
 
 // ── MoE Forward ─────────────────────────────────────────────────────
 
+#[derive(Copy, Clone)]
+struct SendPtr(*const f32);
+unsafe impl Send for SendPtr {}
+unsafe impl Sync for SendPtr {}
+
 fn silu(x: f32) -> f32 { x / (1.0 + (-x).exp()) }
 
 /// Full MoE expert forward for one layer. Single function call, zero Python overhead.
@@ -274,13 +279,13 @@ fn moe_forward_layer(
     }
 
     // Check per-layer cache for pre-dequantized expert weights
-    let cache: Vec<(usize, Vec<f32>, Vec<f32>, Vec<f32>)> = {
+    let cache: Vec<(usize, SendPtr, SendPtr, SendPtr)> = {
         let track = track_layer.unwrap_or(usize::MAX);
         let caches = unsafe { CACHED_EXPERTS.as_ref() };
         if let Some(caches) = caches {
             if track < caches.len() {
                 caches[track].lock().unwrap().iter()
-                    .map(|(eid, g, u, d)| (*eid, g.clone(), u.clone(), d.clone()))
+                    .map(|(eid, g, u, d)| (*eid, SendPtr(g.as_ptr()), SendPtr(u.as_ptr()), SendPtr(d.as_ptr())))
                     .collect()
             } else { Vec::new() }
         } else { Vec::new() }
@@ -292,7 +297,12 @@ fn moe_forward_layer(
         .zip(routing_weights.par_iter())
         .map(|(&eid, &rw)| {
             // Check cache first (fast f32 GEMV, no dequantize)
-            if let Some((_, gate, up, down)) = cache.iter().find(|(cid, _, _, _)| *cid == eid) {
+            if let Some((_, gate_ptr, up_ptr, down_ptr)) = cache.iter().find(|(cid, _, _, _)| *cid == eid) {
+                // Reconstruct slices from raw pointers safely
+                let gate = unsafe { std::slice::from_raw_parts(gate_ptr.0, FFN_DIM * HIDDEN_DIM) };
+                let up = unsafe { std::slice::from_raw_parts(up_ptr.0, FFN_DIM * HIDDEN_DIM) };
+                let down = unsafe { std::slice::from_raw_parts(down_ptr.0, HIDDEN_DIM * FFN_DIM) };
+
                 // Cache stores gate/up separately at FFN_DIM×HIDDEN_DIM (512×2048)
                 let gate_out = f32_gemv(gate, x, FFN_DIM, HIDDEN_DIM);
                 let up_out = f32_gemv(up, x, FFN_DIM, HIDDEN_DIM);
@@ -651,11 +661,7 @@ fn f32_gemv(w: &[f32], x: &[f32], M: usize, K: usize) -> Vec<f32> {
     let mut result = vec![0.0f32; M];
     for row in 0..M {
         let row_slice = &w[row * K..(row + 1) * K];
-        let mut dot = 0.0f32;
-        for j in 0..K {
-            dot += row_slice[j] * x[j];
-        }
-        result[row] = dot;
+        result[row] = crate::qwen36_forward::dot_f32(row_slice, x);
     }
     result
 }

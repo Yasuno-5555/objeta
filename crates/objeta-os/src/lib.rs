@@ -96,6 +96,16 @@ impl PrecisionMode {
             _ => PrecisionMode::Fp16,
         }
     }
+
+    pub fn downgrade(&self) -> Self {
+        match self {
+            PrecisionMode::Fp16 => PrecisionMode::Q8,
+            PrecisionMode::Q8 => PrecisionMode::Q5,
+            PrecisionMode::Q5 => PrecisionMode::Q4,
+            PrecisionMode::Q4 => PrecisionMode::Q3,
+            PrecisionMode::Q3 => PrecisionMode::Q3,
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -209,6 +219,199 @@ impl Observation {
 
         TokenClass::Default
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Observation Pipeline — runtime signal measurement
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Clone, Default)]
+pub struct ObservationPipeline {
+    pub prev_hidden: Option<Vec<f64>>,
+    pub prev_attn_weights: std::collections::HashMap<usize, Vec<Vec<f64>>>,
+}
+
+impl ObservationPipeline {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn reset(&mut self) {
+        self.prev_hidden = None;
+        self.prev_attn_weights.clear();
+    }
+
+    /// Compute entropy, top-1 logit, and repeat flag from logits.
+    ///
+    /// Returns (entropy, top1_logit, top1_token_id).
+    pub fn observe_logits(&self, logits: &[f64]) -> (f64, f64, usize) {
+        if logits.is_empty() {
+            return (0.0, 0.0, 0);
+        }
+
+        let max_logit = logits.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let stable: Vec<f64> = logits.iter().map(|&x| x - max_logit).collect();
+
+        let mut probs: Vec<f64> = stable.iter().map(|&x| x.exp()).collect();
+        let sum_probs: f64 = probs.iter().sum();
+
+        if sum_probs > 0.0 {
+            for p in &mut probs {
+                *p /= sum_probs;
+            }
+        }
+
+        let max_ent = (logits.len() as f64).ln();
+        let mut shannon = 0.0;
+        for &p in &probs {
+            if p > 0.0 {
+                shannon -= p * p.ln();
+            }
+        }
+
+        let entropy = if max_ent > 0.0 { shannon / max_ent } else { 0.0 };
+
+        let mut top1 = 0;
+        let mut top1_logit = logits[0];
+        for (i, &val) in logits.iter().enumerate() {
+            if val > top1_logit {
+                top1_logit = val;
+                top1 = i;
+            }
+        }
+
+        (entropy, top1_logit, top1)
+    }
+
+    /// Compute steering magnitude: 1 - cos(h_t, h_{t-1}).
+    ///
+    /// Returns steering in [0, 2]. 0 = identical, 2 = opposite.
+    pub fn observe_hidden(&mut self, hidden: &[f64]) -> f64 {
+        if hidden.is_empty() {
+            return 0.0;
+        }
+
+        if let Some(prev) = &self.prev_hidden {
+            let h_norm = (hidden.iter().map(|&x| x * x).sum::<f64>()).sqrt();
+            let prev_norm = (prev.iter().map(|&x| x * x).sum::<f64>()).sqrt();
+            let dot_prod = hidden.iter().zip(prev.iter()).map(|(&x, &y)| x * y).sum::<f64>();
+            let cos = dot_prod / (h_norm * prev_norm + 1e-12);
+            self.prev_hidden = Some(hidden.to_vec());
+            1.0 - cos
+        } else {
+            self.prev_hidden = Some(hidden.to_vec());
+            0.0
+        }
+    }
+
+    /// Compute attention divergence from previous step.
+    ///
+    /// attn_weights shape: (n_heads, seq_len).
+    /// Returns mean(1 - cos(A_head_t, A_head_{t-1})) across heads.
+    pub fn observe_attention(&mut self, layer_idx: usize, attn_weights: &[Vec<f64>]) -> Option<f64> {
+        if attn_weights.is_empty() {
+            return None;
+        }
+
+        if let Some(prev) = self.prev_attn_weights.get(&layer_idx) {
+            if prev.len() != attn_weights.len() || prev[0].len() != attn_weights[0].len() {
+                self.prev_attn_weights.insert(layer_idx, attn_weights.to_vec());
+                return None;
+            }
+
+            let n_heads = attn_weights.len();
+            let mut divergences = Vec::with_capacity(n_heads);
+
+            for h in 0..n_heads {
+                let head_curr = &attn_weights[h];
+                let head_prev = &prev[h];
+
+                let norm_curr = (head_curr.iter().map(|&x| x * x).sum::<f64>()).sqrt();
+                let norm_prev = (head_prev.iter().map(|&x| x * x).sum::<f64>()).sqrt();
+                let dot_prod = head_curr.iter().zip(head_prev.iter()).map(|(&x, &y)| x * y).sum::<f64>();
+
+                let cos = dot_prod / (norm_curr * norm_prev + 1e-12);
+                divergences.push(1.0 - cos);
+            }
+
+            self.prev_attn_weights.insert(layer_idx, attn_weights.to_vec());
+            let mean_div = divergences.iter().sum::<f64>() / n_heads as f64;
+            Some(mean_div)
+        } else {
+            self.prev_attn_weights.insert(layer_idx, attn_weights.to_vec());
+            None
+        }
+    }
+}
+
+// ── Standalone convenience functions ──
+
+/// Normalized Shannon entropy from logits.
+pub fn compute_entropy(logits: &[f64]) -> f64 {
+    if logits.is_empty() {
+        return 0.0;
+    }
+
+    let max_logit = logits.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let stable: Vec<f64> = logits.iter().map(|&x| x - max_logit).collect();
+
+    let mut probs: Vec<f64> = stable.iter().map(|&x| x.exp()).collect();
+    let sum_probs: f64 = probs.iter().sum();
+
+    if sum_probs > 0.0 {
+        for p in &mut probs {
+            *p /= sum_probs;
+        }
+    }
+
+    let max_ent = (logits.len() as f64).ln();
+    let mut shannon = 0.0;
+    for &p in &probs {
+        if p > 0.0 {
+            shannon -= p * p.ln();
+        }
+    }
+
+    if max_ent > 0.0 { shannon / max_ent } else { 0.0 }
+}
+
+/// 1 - cos(h_curr, h_prev).
+pub fn compute_steering(h_curr: &[f64], h_prev: &[f64]) -> f64 {
+    if h_curr.is_empty() || h_prev.is_empty() {
+        return 0.0;
+    }
+
+    let norm_curr = (h_curr.iter().map(|&x| x * x).sum::<f64>()).sqrt();
+    let norm_prev = (h_prev.iter().map(|&x| x * x).sum::<f64>()).sqrt();
+    let dot_prod = h_curr.iter().zip(h_prev.iter()).map(|(&x, &y)| x * y).sum::<f64>();
+
+    let cos = dot_prod / (norm_curr * norm_prev + 1e-12);
+    1.0 - cos
+}
+
+/// Mean per-head attention divergence.
+pub fn compute_attention_divergence(a_curr: &[Vec<f64>], a_prev: &[Vec<f64>]) -> Option<f64> {
+    if a_curr.is_empty() || a_prev.is_empty() || a_curr.len() != a_prev.len() || a_curr[0].len() != a_prev[0].len() {
+        return None;
+    }
+
+    let n_heads = a_curr.len();
+    let mut divergences = Vec::with_capacity(n_heads);
+
+    for h in 0..n_heads {
+        let head_curr = &a_curr[h];
+        let head_prev = &a_prev[h];
+
+        let norm_curr = (head_curr.iter().map(|&x| x * x).sum::<f64>()).sqrt();
+        let norm_prev = (head_prev.iter().map(|&x| x * x).sum::<f64>()).sqrt();
+        let dot_prod = head_curr.iter().zip(head_prev.iter()).map(|(&x, &y)| x * y).sum::<f64>();
+
+        let cos = dot_prod / (norm_curr * norm_prev + 1e-12);
+        divergences.push(1.0 - cos);
+    }
+
+    let mean_div = divergences.iter().sum::<f64>() / n_heads as f64;
+    Some(mean_div)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -554,6 +757,290 @@ pub struct RecoveryActions {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Hysteresis — prevents scheduler thrashing
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HysteresisState {
+    pub current_class: TokenClass,
+    pub consecutive_stable: usize,
+    pub consecutive_unstable: usize,
+    pub precision_level: PrecisionMode,
+    pub precision_stable_count: usize,
+}
+
+impl Default for HysteresisState {
+    fn default() -> Self {
+        Self {
+            current_class: TokenClass::Default,
+            consecutive_stable: 0,
+            consecutive_unstable: 0,
+            precision_level: PrecisionMode::Q8,
+            precision_stable_count: 0,
+        }
+    }
+}
+
+impl HysteresisState {
+    pub fn classify(&mut self, entropy: f64, steering: f64, is_repeat: bool) -> TokenClass {
+        // Repetition has highest priority (no hysteresis needed — absolute signal)
+        if is_repeat {
+            self.consecutive_unstable += 1;
+            self.consecutive_stable = 0;
+            self.current_class = TokenClass::Repetitive;
+            return self.current_class;
+        }
+
+        // Enter TRANSITION: both entropy AND steering spike
+        if entropy > 0.22 && steering > 0.7 && self.current_class != TokenClass::Transition {
+            self.current_class = TokenClass::Transition;
+            self.consecutive_unstable += 1;
+            self.consecutive_stable = 0;
+            return self.current_class;
+        }
+
+        // Stay in TRANSITION: lower leave threshold
+        if self.current_class == TokenClass::Transition {
+            if steering > 0.5 || entropy > 0.15 {
+                self.consecutive_unstable += 1;
+                return self.current_class;
+            }
+            // Leave: both drop below leave thresholds
+            self.consecutive_unstable = 0;
+        }
+
+        // Enter STEERING: high steering
+        if steering > 0.6 && self.current_class != TokenClass::Steering {
+            self.current_class = TokenClass::Steering;
+            self.consecutive_unstable += 1;
+            self.consecutive_stable = 0;
+            return self.current_class;
+        }
+
+        // Stay in STEERING: lower leave threshold
+        if self.current_class == TokenClass::Steering {
+            if steering > 0.45 {
+                self.consecutive_unstable += 1;
+                return self.current_class;
+            }
+            self.consecutive_unstable = 0;
+        }
+
+        // Enter STABLE: sustained low entropy + low steering
+        if entropy < 0.04 && steering < 0.35 && self.current_class != TokenClass::Stable {
+            self.consecutive_stable += 1;
+            if self.consecutive_stable >= 2 {  // need 2 consecutive
+                self.current_class = TokenClass::Stable;
+                self.consecutive_unstable = 0;
+                return self.current_class;
+            }
+            return self.current_class;
+        } else if entropy > 0.06 || steering > 0.4 {
+            self.consecutive_stable = 0;
+        }
+
+        // Stay in STABLE: wider leave threshold
+        if self.current_class == TokenClass::Stable {
+            if entropy < 0.08 && steering < 0.5 {
+                return self.current_class;
+            }
+            self.consecutive_stable = 0;
+        }
+
+        // Default
+        self.current_class = TokenClass::Default;
+        self.consecutive_stable = 0;
+        self.current_class
+    }
+
+    pub fn get_precision(&mut self, target: PrecisionMode) -> PrecisionMode {
+        // Allow immediate upgrade (never delay safety)
+        if target.bits() > self.precision_level.bits() {
+            self.precision_level = target;
+            self.precision_stable_count = 0;
+            return target;
+        }
+
+        // Downgrade requires sustained stability
+        if target.bits() < self.precision_level.bits() {
+            self.precision_stable_count += 1;
+            if self.precision_stable_count >= 3 {  // 3 tokens stable before downgrade
+                self.precision_level = self.precision_level.downgrade();
+                self.precision_stable_count = 0;
+            }
+            return self.precision_level;
+        }
+
+        self.precision_stable_count = 0;
+        self.precision_level
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Collapse Hysteresis — prevents collapse status flapping
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CollapseHysteresis {
+    pub current_status: CollapseStatus,
+    pub healthy_count: usize,
+    pub warning_count: usize,
+}
+
+impl Default for CollapseHysteresis {
+    fn default() -> Self {
+        Self {
+            current_status: CollapseStatus::Healthy,
+            healthy_count: 0,
+            warning_count: 0,
+        }
+    }
+}
+
+impl CollapseHysteresis {
+    pub fn update(&mut self, raw_status: CollapseStatus) -> CollapseStatus {
+        // CRITICAL: enter immediately, leave slowly
+        if raw_status == CollapseStatus::Critical {
+            self.current_status = CollapseStatus::Critical;
+            self.healthy_count = 0;
+            return self.current_status;
+        }
+
+        if self.current_status == CollapseStatus::Critical {
+            self.healthy_count += 1;
+            if self.healthy_count >= 5 {  // 5 healthy tokens to clear critical
+                self.current_status = CollapseStatus::Healthy;
+                self.healthy_count = 0;
+            }
+            return self.current_status;
+        }
+
+        // WARNING: enter/leave with debounce
+        if raw_status == CollapseStatus::Warning {
+            self.warning_count += 1;
+            if self.warning_count >= 2 {  // 2 consecutive warnings to enter
+                self.current_status = CollapseStatus::Warning;
+                self.healthy_count = 0;
+            }
+            return self.current_status;
+        }
+
+        self.warning_count = 0;
+        self.healthy_count += 1;
+        if self.current_status == CollapseStatus::Warning {
+            if self.healthy_count >= 3 {  // 3 healthy to clear warning
+                self.current_status = CollapseStatus::Healthy;
+            }
+        }
+        self.current_status
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Collapse Memory — persistent degradation tracking for long-context
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CollapseMemory {
+    pub window_size: usize,
+    pub collapse_history: Vec<f64>,
+    pub steering_history: Vec<f64>,
+    pub entropy_history: Vec<f64>,
+    pub repetition_history: Vec<usize>,
+    pub risk_score: f64,
+    pub conservative_mode: bool,
+    pub conservative_mode_entered_at: i32,
+    pub total_collapse_tokens: usize,
+    pub total_warning_tokens: usize,
+}
+
+impl Default for CollapseMemory {
+    fn default() -> Self {
+        Self {
+            window_size: 128,
+            collapse_history: Vec::with_capacity(128),
+            steering_history: Vec::with_capacity(128),
+            entropy_history: Vec::with_capacity(128),
+            repetition_history: Vec::with_capacity(128),
+            risk_score: 0.0,
+            conservative_mode: false,
+            conservative_mode_entered_at: -1,
+            total_collapse_tokens: 0,
+            total_warning_tokens: 0,
+        }
+    }
+}
+
+impl CollapseMemory {
+    pub fn update(
+        &mut self,
+        collapse_status: CollapseStatus,
+        steering: f64,
+        entropy: f64,
+        is_repeat: bool,
+        token_idx: usize,
+    ) {
+        let status_score = match collapse_status {
+            CollapseStatus::Healthy => 0.0,
+            CollapseStatus::Warning => 0.5,
+            CollapseStatus::Critical => 1.0,
+        };
+
+        self.collapse_history.push(status_score);
+        self.steering_history.push(steering);
+        self.entropy_history.push(entropy);
+        self.repetition_history.push(if is_repeat { 1 } else { 0 });
+
+        if self.collapse_history.len() > self.window_size {
+            self.collapse_history.remove(0);
+            self.steering_history.remove(0);
+            self.entropy_history.remove(0);
+            self.repetition_history.remove(0);
+        }
+
+        match collapse_status {
+            CollapseStatus::Critical => self.total_collapse_tokens += 1,
+            CollapseStatus::Warning => self.total_warning_tokens += 1,
+            CollapseStatus::Healthy => {}
+        }
+
+        let recent_window = std::cmp::min(32, self.collapse_history.len());
+        if recent_window > 0 {
+            let start = self.collapse_history.len() - recent_window;
+            let mean_collapse = self.collapse_history[start..].iter().sum::<f64>() / recent_window as f64;
+            let repeat_rate = self.repetition_history[start..].iter().sum::<usize>() as f64 / recent_window as f64;
+            let mean_steering = self.steering_history[start..].iter().sum::<f64>() / recent_window as f64;
+
+            let new_risk = mean_collapse * (1.0 + mean_steering) * (1.0 + repeat_rate * 3.0);
+            self.risk_score = 0.8 * self.risk_score + 0.2 * new_risk;
+        }
+
+        if self.risk_score > 0.4 && !self.conservative_mode {
+            self.conservative_mode = true;
+            self.conservative_mode_entered_at = token_idx as i32;
+        } else if self.risk_score < 0.15 && self.conservative_mode {
+            self.conservative_mode = false;
+        }
+    }
+
+    pub fn should_force_conservative(&self) -> bool {
+        self.conservative_mode
+    }
+
+    pub fn reset(&mut self) {
+        self.collapse_history.clear();
+        self.steering_history.clear();
+        self.entropy_history.clear();
+        self.repetition_history.clear();
+        self.risk_score = 0.0;
+        self.conservative_mode = false;
+        self.conservative_mode_entered_at = -1;
+        self.total_collapse_tokens = 0;
+        self.total_warning_tokens = 0;
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Precision Governor (DVFS for LLM)
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -629,11 +1116,20 @@ pub struct Scheduler {
     #[allow(dead_code)]
     governor: PrecisionGovernor,
 
+    // Hysteresis states
+    pub token_hysteresis: HysteresisState,
+    pub collapse_hysteresis: CollapseHysteresis,
+
+    // Collapse memory
+    pub collapse_memory: CollapseMemory,
+
     // Counters
     pub layers_run: usize,
     pub layers_skipped: usize,
     pub layers_low_precision: usize,
     pub temporal_skips: usize,
+    pub class_oscillations: usize,
+    pub last_class: Option<TokenClass>,
 }
 
 impl Scheduler {
@@ -663,10 +1159,15 @@ impl Scheduler {
             state,
             collapse_detector,
             governor: PrecisionGovernor,
+            token_hysteresis: HysteresisState::default(),
+            collapse_hysteresis: CollapseHysteresis::default(),
+            collapse_memory: CollapseMemory::default(),
             layers_run: 0,
             layers_skipped: 0,
             layers_low_precision: 0,
             temporal_skips: 0,
+            class_oscillations: 0,
+            last_class: None,
         }
     }
 
@@ -690,17 +1191,28 @@ impl Scheduler {
             self.state.steering_history.remove(0);
         }
 
-        // Classify
-        let token_class = obs.classify();
+        // Classify WITH hysteresis
+        let tc = self.token_hysteresis.classify(obs.entropy, obs.steering, obs.is_repeat);
 
-        // Check collapse
-        let collapse = self.collapse_detector.detect(obs, &self.state);
-        self.state.collapse_status = collapse;
+        // Track class oscillations
+        if let Some(last) = self.last_class {
+            if tc != last {
+                self.class_oscillations += 1;
+            }
+        }
+        self.last_class = Some(tc);
 
-        // Reset per-token counters
+        // Check collapse WITH hysteresis
+        let raw_cs = self.collapse_detector.detect(obs, &self.state);
+        let cs = self.collapse_hysteresis.update(raw_cs);
+        self.state.collapse_status = cs;
+
+        // Feed collapse memory (long-context degradation tracking)
+        self.collapse_memory.update(cs, obs.steering, obs.entropy, obs.is_repeat, self.state.token_count);
+
         self.state.token_count += 1;
 
-        token_class
+        tc
     }
 
     // ── Dispatch ──
@@ -719,6 +1231,13 @@ impl Scheduler {
 
         // Collapse detection overrides
         if self.state.collapse_status == CollapseStatus::Critical {
+            self.layers_run += 1;
+            self.state.layer_health[layer_idx].run_count += 1;
+            return true;
+        }
+
+        // Long-context: conservative mode overrides all skip
+        if self.collapse_memory.should_force_conservative() {
             self.layers_run += 1;
             self.state.layer_health[layer_idx].run_count += 1;
             return true;
@@ -780,6 +1299,9 @@ impl Scheduler {
         if self.state.collapse_status == CollapseStatus::Critical {
             return true;
         }
+        if self.collapse_memory.should_force_conservative() {
+            return true;
+        }
         if matches!(token_class, TokenClass::Repetitive)
             && matches!(policy.phase, LayerZone::IsometricLocal | LayerZone::IsometricGlobal)
         {
@@ -827,8 +1349,13 @@ impl Scheduler {
         self.layers_skipped = 0;
         self.layers_low_precision = 0;
         self.temporal_skips = 0;
+        self.class_oscillations = 0;
+        self.last_class = None;
         self.state = RuntimeState::default();
         self.collapse_detector.reset();
+        self.token_hysteresis = HysteresisState::default();
+        self.collapse_hysteresis = CollapseHysteresis::default();
+        self.collapse_memory.reset();
     }
 }
 
@@ -1240,6 +1767,7 @@ mod tests {
             is_repeat: false,
             ..Default::default()
         };
+        let _tc1 = sched.begin_token(None, &obs);
         let tc = sched.begin_token(None, &obs);
         assert_eq!(tc, TokenClass::Stable);
 
@@ -1358,5 +1886,99 @@ mod tests {
         };
         assert_eq!(fault.fault_type, FaultType::ForceQ3);
         assert_eq!(fault.token_idx, Some(5));
+    }
+
+    #[test]
+    fn test_hysteresis_and_collapse_memory() {
+        let mut hyst = HysteresisState::default();
+        
+        // 1st token stable: count becomes 1, returns Default (not stable yet)
+        let tc1 = hyst.classify(0.02, 0.1, false);
+        assert_eq!(tc1, TokenClass::Default);
+        assert_eq!(hyst.consecutive_stable, 1);
+
+        // 2nd token stable: count becomes 2, returns Stable
+        let tc2 = hyst.classify(0.02, 0.1, false);
+        assert_eq!(tc2, TokenClass::Stable);
+        assert_eq!(hyst.consecutive_stable, 2);
+
+        // 3rd token stable: remains Stable
+        let tc3 = hyst.classify(0.02, 0.1, false);
+        assert_eq!(tc3, TokenClass::Stable);
+
+        // Transition: spikes should change class
+        let tc4 = hyst.classify(0.25, 0.75, false);
+        assert_eq!(tc4, TokenClass::Transition);
+
+        // Repetitive absolute override
+        let tc5 = hyst.classify(0.1, 0.1, true);
+        assert_eq!(tc5, TokenClass::Repetitive);
+
+        // Test precision get_precision rate limit
+        // Immediate upgrade
+        let p1 = hyst.get_precision(PrecisionMode::Fp16);
+        assert_eq!(p1, PrecisionMode::Fp16);
+
+        // Downgrade requires 3 consecutive stable tokens
+        let p2 = hyst.get_precision(PrecisionMode::Q4);
+        assert_eq!(p2, PrecisionMode::Fp16); // first stable token: no downgrade
+        let p3 = hyst.get_precision(PrecisionMode::Q4);
+        assert_eq!(p3, PrecisionMode::Fp16); // second stable token: no downgrade
+        let p4 = hyst.get_precision(PrecisionMode::Q4);
+        assert_eq!(p4, PrecisionMode::Q8); // third stable token: downgrade by 1 level (Fp16 -> Q8)
+
+        // Test CollapseMemory
+        let mut mem = CollapseMemory::default();
+        mem.update(CollapseStatus::Warning, 0.2, 0.1, false, 1);
+        assert_eq!(mem.total_warning_tokens, 1);
+        assert!(!mem.should_force_conservative());
+
+        // Accumulate a bunch of critical risk
+        for i in 2..20 {
+            mem.update(CollapseStatus::Critical, 0.9, 0.01, true, i);
+        }
+        assert!(mem.risk_score > 0.4);
+        assert!(mem.should_force_conservative());
+    }
+
+    #[test]
+    fn test_observation_pipeline() {
+        let mut pipe = ObservationPipeline::new();
+
+        // 1. observe_logits (entropy, logit, token_id)
+        let logits = vec![1.0, 2.0, 1.0, 1.0, 5.0];
+        let (ent, max_log, tid) = pipe.observe_logits(&logits);
+        assert!(ent > 0.0 && ent < 1.0);
+        assert_eq!(max_log, 5.0);
+        assert_eq!(tid, 4);
+
+        // 2. observe_hidden (steering)
+        let h1 = vec![1.0, 0.0, 0.0];
+        let steer1 = pipe.observe_hidden(&h1);
+        assert_eq!(steer1, 0.0); // first token has no previous hidden
+
+        let h2 = vec![0.0, 1.0, 0.0];
+        let steer2 = pipe.observe_hidden(&h2);
+        assert!(steer2 > 0.99); // orthogonal vectors: cos = 0, steer = 1.0
+
+        // 3. observe_attention (divergence)
+        let attn_weights = vec![
+            vec![1.0, 0.0],
+            vec![0.0, 1.0],
+        ];
+        let div1 = pipe.observe_attention(0, &attn_weights);
+        assert!(div1.is_none()); // first call initializes weights
+
+        let attn_weights2 = vec![
+            vec![0.0, 1.0],
+            vec![1.0, 0.0],
+        ];
+        let div2 = pipe.observe_attention(0, &attn_weights2);
+        assert!(div2.is_some());
+        assert!(div2.unwrap() > 0.99); // orthogonal: 1.0
+
+        // 4. Standalone functions
+        assert!((compute_steering(&h1, &h1) - 0.0).abs() < 1e-9);
+        assert!(compute_steering(&h1, &h2) > 0.99);
     }
 }

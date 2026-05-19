@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Qwen3.6 generation — Rust executor (all ops in Rust: forward + lm_head + top-k)."""
+import argparse
 import ctypes, numpy as np, math, time, sys, os
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -26,18 +27,9 @@ lib.lko_runner_set_fusion_ratio.restype = ctypes.c_int32
 lib.lko_runner_set_moe_on_deltanet.argtypes = [ctypes.c_int32]
 lib.lko_runner_set_moe_on_deltanet.restype = ctypes.c_int32
 
-FUSION_RATIO = float(sys.argv[1]) if len(sys.argv) > 1 else 0.33
-MOE_ON_DELTANET = int(sys.argv[2]) if len(sys.argv) > 2 else 0
-
-lib.lko_runner_set_fusion_ratio(FUSION_RATIO)
-lib.lko_runner_set_moe_on_deltanet(MOE_ON_DELTANET)
-print(f"Strategy: ΔN={FUSION_RATIO:.0%} ({int(30*FUSION_RATIO)}/30 layers), MoE on ΔN={'yes' if MOE_ON_DELTANET else 'no'}")
-
 # Warmup: touch q4 pages to bring them into OS page cache
 lib.lko_runner_warmup.argtypes = [ctypes.c_int32]
 lib.lko_runner_warmup.restype = ctypes.c_int32
-print("Warming OS page cache...")
-lib.lko_runner_warmup(100)
 
 # C API: single step = forward + RMSNorm + lm_head + top-k
 lib.lko_runner_step.argtypes = [
@@ -54,7 +46,10 @@ def rust_step(token_id, pos, seq_len, top_k=50):
     indices = np.zeros(top_k, dtype=np.int32)
     values = np.zeros(top_k, dtype=np.float32)
     k = lib.lko_runner_step(token_id, pos, seq_len, hn.ctypes.data, top_k, indices.ctypes.data, values.ctypes.data)
-    return hn, indices[:k], values[:k]
+    indices = indices[:k]
+    values = values[:k]
+    order = np.argsort(values)[::-1]
+    return hn, indices[order], values[order]
 
 def sample(indices, values, temperature=0.7, top_k=40):
     """Python-side sampling from top-k logits."""
@@ -74,14 +69,15 @@ def generate(prompt_ids, max_tokens=20, temperature=0.7, top_k=40):
     print(f"Prefilling {n_prompt} tokens...")
     t0 = time.perf_counter()
 
+    indices = values = None
     for i, tid in enumerate(tokens):
-        _, _, _ = rust_step(tid, i, i+1, 10)
+        _, indices, values = rust_step(tid, i, i+1, max(50, top_k))
         if i % 5 == 0 or i == n_prompt-1:
             print(f"  [{i+1}/{n_prompt}] {time.perf_counter()-t0:.0f}s", flush=True)
     print(f"  Prefill done in {time.perf_counter()-t0:.1f}s")
 
-    # First token
-    _, indices, values = rust_step(tokens[-1], n_prompt-1, n_prompt, max(50, top_k))
+    # The logits returned from the last prefill token are already the first
+    # next-token distribution; do not process the prompt tail twice.
     if temperature == 0:
         next_token = int(indices[0])
     else:
@@ -109,7 +105,36 @@ def generate(prompt_ids, max_tokens=20, temperature=0.7, top_k=40):
     print(f"\n  {n_gen} tokens in {total_s:.1f}s ({n_gen/total_s:.2f} tok/s)")
     return generated
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Qwen3.6 Rust executor smoke/full generation")
+    parser.add_argument("fusion_ratio", nargs="?", type=float, default=0.33)
+    parser.add_argument("moe_on_deltanet", nargs="?", type=int, default=0)
+    parser.add_argument("--warmup-tokens", type=int, default=100,
+                        help="Number of warmup tokens for OS page cache. Use 0 for a light smoke test.")
+    parser.add_argument("--max-tokens", type=int, default=15,
+                        help="Number of generated tokens.")
+    parser.add_argument("--temperature", type=float, default=0.0,
+                        help="Sampling temperature. 0 = greedy.")
+    parser.add_argument("--top-k", type=int, default=0,
+                        help="Sampling top-k. Ignored when temperature=0.")
+    parser.add_argument("--prompt", default="The meaning of life is",
+                        help="User prompt content before chat templating.")
+    return parser.parse_args()
+
 if __name__ == "__main__":
+    args = parse_args()
+    lib.lko_runner_set_fusion_ratio(args.fusion_ratio)
+    lib.lko_runner_set_moe_on_deltanet(args.moe_on_deltanet)
+    print(
+        f"Strategy: ΔN={args.fusion_ratio:.0%} ({int(30*args.fusion_ratio)}/30 layers), "
+        f"MoE on ΔN={'yes' if args.moe_on_deltanet else 'no'}"
+    )
+    if args.warmup_tokens > 0:
+        print(f"Warming OS page cache... ({args.warmup_tokens} tokens)")
+        lib.lko_runner_warmup(args.warmup_tokens)
+    else:
+        print("Skipping OS page cache warmup for smoke test")
+
     from transformers import AutoTokenizer
     snap = sorted(os.listdir(
         "/Users/yasuno/.cache/huggingface/hub/models--Qwen--Qwen3.6-35B-A3B/snapshots"))[-1]
@@ -117,11 +142,11 @@ if __name__ == "__main__":
         f"/Users/yasuno/.cache/huggingface/hub/models--Qwen--Qwen3.6-35B-A3B/snapshots/{snap}")
     print(f"Vocab: {tok.vocab_size}\n")
 
-    for prompt in ["The meaning of life is"]:
+    for prompt in [args.prompt]:
         msgs = [{"role": "user", "content": prompt}]
         chat = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
         ids = tok.encode(chat)
         print(f"── Prompt: \"{prompt}\" ──")
-        gen = generate(ids, max_tokens=15, temperature=0, top_k=0)
+        gen = generate(ids, max_tokens=args.max_tokens, temperature=args.temperature, top_k=args.top_k)
         text = tok.decode(gen, skip_special_tokens=True)
         print(f"  Output: {text}")

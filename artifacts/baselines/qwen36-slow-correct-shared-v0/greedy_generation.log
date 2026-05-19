@@ -1,0 +1,64 @@
+[objeta] lm_head loaded from lm_head.bin
+[objeta] Metal GQA: disabled pending kernel parity, using CPU fallback
+Strategy: ΔN=100% (30/30 layers), MoE on ΔN=yes
+Skipping OS page cache warmup for smoke test
+Vocab: 248044
+
+── Prompt: "The capital of France is" ──
+Prefilling 15 tokens...
+TIMING: delta=1867ms gqa=573ms shared=229ms moe=2164ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+  [1/15] 9s
+TIMING: delta=1466ms gqa=362ms shared=181ms moe=2065ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=2968ms gqa=957ms shared=340ms moe=2522ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=2370ms gqa=480ms shared=348ms moe=2795ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=1974ms gqa=504ms shared=248ms moe=2463ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=2525ms gqa=578ms shared=354ms moe=2742ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+  [6/15] 57s
+TIMING: delta=2218ms gqa=442ms shared=389ms moe=2735ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=2109ms gqa=534ms shared=233ms moe=2456ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=2176ms gqa=382ms shared=213ms moe=2399ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=2398ms gqa=431ms shared=246ms moe=2798ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=1900ms gqa=478ms shared=221ms moe=2254ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+  [11/15] 104s
+TIMING: delta=1757ms gqa=495ms shared=220ms moe=2173ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=2421ms gqa=583ms shared=321ms moe=2661ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=1908ms gqa=597ms shared=240ms moe=2209ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=1771ms gqa=458ms shared=255ms moe=2009ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+  [15/15] 139s
+  Prefill done in 139.3s
+TIMING: delta=1548ms gqa=407ms shared=187ms moe=1702ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+  [1/25] 7s (0.13 tok/s)
+TIMING: delta=1575ms gqa=472ms shared=196ms moe=1817ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=1443ms gqa=345ms shared=191ms moe=1654ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=2093ms gqa=454ms shared=281ms moe=2657ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=2670ms gqa=585ms shared=317ms moe=2813ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=1971ms gqa=488ms shared=263ms moe=2431ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+  [6/25] 52s (0.12 tok/s)
+TIMING: delta=1361ms gqa=386ms shared=188ms moe=1670ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=1122ms gqa=247ms shared=136ms moe=1335ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=1195ms gqa=286ms shared=122ms moe=1412ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=1466ms gqa=369ms shared=164ms moe=1435ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=1093ms gqa=274ms shared=138ms moe=1215ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+  [11/25] 86s (0.13 tok/s)
+TIMING: delta=1315ms gqa=340ms shared=156ms moe=1294ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=1229ms gqa=332ms shared=135ms moe=1577ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=1146ms gqa=311ms shared=138ms moe=1352ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=1090ms gqa=240ms shared=141ms moe=1175ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=944ms gqa=210ms shared=108ms moe=1133ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+  [16/25] 117s (0.14 tok/s)
+TIMING: delta=1112ms gqa=247ms shared=124ms moe=1292ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=1265ms gqa=301ms shared=137ms moe=1457ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=1271ms gqa=286ms shared=140ms moe=1385ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=1001ms gqa=212ms shared=118ms moe=2799ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=1264ms gqa=275ms shared=133ms moe=1498ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+  [21/25] 149s (0.14 tok/s)
+TIMING: delta=1180ms gqa=296ms shared=150ms moe=1356ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=1156ms gqa=272ms shared=127ms moe=1504ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=1177ms gqa=336ms shared=138ms moe=1456ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=1707ms gqa=399ms shared=188ms moe=2081ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+  [25/25] 177s (0.14 tok/s)
+
+  25 tokens in 176.7s (0.14 tok/s)
+  Output: Here's a thinking process:
+
+1.  **Analyze User Input:** The user asks "The capital of France is

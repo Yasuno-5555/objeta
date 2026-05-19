@@ -29,19 +29,22 @@ safetensors / .bin weights
 | DeltaNet states | ~5MB | f32 | RAM |
 | Scratch buffers | ~40KB | f32 | RAM |
 
-## Verified Correctness
+## Verified Correctness (2026-05-19)
 
-| Component | Method | Result |
-|-----------|--------|--------|
-| DeltaNet | HF reference comparison | cos=1.000000 (all intermediates) |
-| GQA attention | Python reference | cos=0.9999 (Metal fused kernel) |
-| Rust GEMV | NumPy reference | cos=1.000000 |
-| MoE dispatch | Python reference | cos=1.000000 (weight test) |
-| Python vs Rust executor | Full forward pass | **identical output** |
+| Component | Method | Result | Status |
+|-----------|--------|--------|--------|
+| DeltaNet L0 attention | HF `Qwen3_5MoeGatedDeltaNet` | cos=0.99999 | ✓ |
+| L0 DecoderLayer | HF `Qwen3_5MoeDecoderLayer` | cos=0.99975 | ✓ |
+| All bin weights | HF safetensors | cos≈1.0 | ✓ |
+| Rust GEMV | NumPy reference | cos=1.000000 | ✓ |
+| MoE dispatch (Q4) | HF full-precision (L0) | cos≈0.989 | ⚠ |
+| GQA attention (CPU) | HF reference | not yet verified | ? |
+| 40-layer generation | HF expected output | **broken** | ✗ |
 
 ## Key Fixes
 
-1. **DeltaNet conv1d order**: PyTorch cross-correlation → `weight[3]` = newest input
+1. **RMSNorm `1+w` convention** (2026-05-19): `Qwen3_5MoeRMSNorm` uses `output * (1.0 + weight)`. Rust was using `output * weight` directly, causing input/post/final norm to be wrong by up to 33x. Also fixed in GQA q_norm/k_norm and Metal kernel.
+2. **DeltaNet conv1d order**: PyTorch cross-correlation → `weight[3]` = newest input
 2. **q_gate dimension**: 4096 (1 per dim), not 256
 3. **Metal dispatchThreads → dispatchThreadgroups**: grid was in threads, needed threadgroups
 4. **SWAP elimination**: f16 weights (2.9GB) + mmap embed instead of f32 (7.8GB)
@@ -58,7 +61,7 @@ safetensors / .bin weights
 
 ## Next Milestones
 
-1. **Output quality**: system prompt for English, tokenizer verification
+1. **Output quality**: fix Q4 MoE quantization / GQA attention to match HF → working generation
 2. **Speed to 1 tok/s**: attention q4 quantization, fused Metal for long seq, paged KV
 3. **Speed to 3 tok/s**: speculative decoding (phase-aware), persistent Metal graphs
 4. **Ecosystem**: OpenAI API, standard benchmarks

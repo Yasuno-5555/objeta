@@ -18,8 +18,10 @@ typedef struct {
     id<MTLComputePipelineState> pipe_fp16_gemv, pipe_q4_gemv, pipe_multi_expert;
     id<MTLComputePipelineState> pipe_gqa, pipe_gqa_oproj;
     // GQA persistent buffers (per-layer weights + reusable caches)
-    id<MTLBuffer> gqa_w, gqa_wo, gqa_k, gqa_v, gqa_h, gqa_cos, gqa_sin, gqa_out;
-    size_t gqa_w_cap, gqa_wo_cap, gqa_kv_cap;
+    id<MTLBuffer> gqa_w[40], gqa_wo[40];
+    size_t gqa_w_cap[40], gqa_wo_cap[40];
+    id<MTLBuffer> gqa_k, gqa_v, gqa_h, gqa_cos, gqa_sin, gqa_out, gqa_q_norm, gqa_k_norm;
+    size_t gqa_kv_cap, gqa_q_norm_cap, gqa_k_norm_cap;
 } MetalGpu;
 
 // ── Init / Destroy ────────────────────────────────────────────────────────
@@ -43,9 +45,13 @@ void metal_destroy(MetalGpu* gpu) {
         [gpu->x_buf release];
         [gpu->y_buf release];
         [gpu->w_buf release];
-        [gpu->gqa_w release]; [gpu->gqa_wo release];
+        for (int i = 0; i < 40; i++) {
+            [gpu->gqa_w[i] release];
+            [gpu->gqa_wo[i] release];
+        }
         [gpu->gqa_k release]; [gpu->gqa_v release];
         [gpu->gqa_h release]; [gpu->gqa_cos release]; [gpu->gqa_sin release];
+        [gpu->gqa_q_norm release]; [gpu->gqa_k_norm release];
         [gpu->gqa_out release];
         [gpu->pipe_fp16_gemv release]; [gpu->pipe_q4_gemv release];
         [gpu->pipe_multi_expert release];
@@ -177,7 +183,7 @@ int metal_multi_expert_gemv(MetalGpu* gpu,
 int metal_gqa_init(MetalGpu* gpu,
                    const float* rope_cos, const float* rope_sin, uint32_t max_seq) {
     if (!gpu) return -1;
-    size_t rope_bytes = max_seq * 128 * sizeof(float);
+    size_t rope_bytes = max_seq * 32 * sizeof(float);
     if (!gpu->gqa_cos) {
         gpu->gqa_cos = [gpu->device newBufferWithBytes:rope_cos length:rope_bytes options:MTLResourceStorageModeShared];
         gpu->gqa_sin = [gpu->device newBufferWithBytes:rope_sin length:rope_bytes options:MTLResourceStorageModeShared];
@@ -196,27 +202,53 @@ int metal_gqa_init(MetalGpu* gpu,
 
 // ── Load per-layer GQA weights into persistent buffers ──────────────────
 
-int metal_gqa_load_weights(MetalGpu* gpu,
+int metal_gqa_load_weights(MetalGpu* gpu, uint32_t layer_idx,
                            const uint16_t* w_qkv, size_t w_qkv_bytes,
-                           const uint16_t* w_o, size_t w_o_bytes) {
-    if (!gpu) return -1;
+                           const uint16_t* w_o, size_t w_o_bytes,
+                           const float* q_norm, size_t q_norm_bytes,
+                           const float* k_norm, size_t k_norm_bytes) {
+    if (!gpu || layer_idx >= 40) return -1;
     // W_qkv: resize buffer if needed, then memcpy
-    if (!gpu->gqa_w || gpu->gqa_w_cap < w_qkv_bytes) {
-        if (gpu->gqa_w) { [gpu->gqa_w release]; gpu->gqa_w = nil; }
-        gpu->gqa_w = [gpu->device newBufferWithBytes:w_qkv length:w_qkv_bytes options:MTLResourceStorageModeShared];
-        [gpu->gqa_w retain];
-        gpu->gqa_w_cap = w_qkv_bytes;
-    } else {
-        memcpy([gpu->gqa_w contents], w_qkv, w_qkv_bytes);
+    if (w_qkv && w_qkv_bytes > 0) {
+        if (!gpu->gqa_w[layer_idx] || gpu->gqa_w_cap[layer_idx] < w_qkv_bytes) {
+            if (gpu->gqa_w[layer_idx]) { [gpu->gqa_w[layer_idx] release]; gpu->gqa_w[layer_idx] = nil; }
+            gpu->gqa_w[layer_idx] = [gpu->device newBufferWithBytes:w_qkv length:w_qkv_bytes options:MTLResourceStorageModeShared];
+            [gpu->gqa_w[layer_idx] retain];
+            gpu->gqa_w_cap[layer_idx] = w_qkv_bytes;
+        } else {
+            memcpy([gpu->gqa_w[layer_idx] contents], w_qkv, w_qkv_bytes);
+        }
     }
     // W_o: same pattern
-    if (!gpu->gqa_wo || gpu->gqa_wo_cap < w_o_bytes) {
-        if (gpu->gqa_wo) { [gpu->gqa_wo release]; gpu->gqa_wo = nil; }
-        gpu->gqa_wo = [gpu->device newBufferWithBytes:w_o length:w_o_bytes options:MTLResourceStorageModeShared];
-        [gpu->gqa_wo retain];
-        gpu->gqa_wo_cap = w_o_bytes;
-    } else {
-        memcpy([gpu->gqa_wo contents], w_o, w_o_bytes);
+    if (w_o && w_o_bytes > 0) {
+        if (!gpu->gqa_wo[layer_idx] || gpu->gqa_wo_cap[layer_idx] < w_o_bytes) {
+            if (gpu->gqa_wo[layer_idx]) { [gpu->gqa_wo[layer_idx] release]; gpu->gqa_wo[layer_idx] = nil; }
+            gpu->gqa_wo[layer_idx] = [gpu->device newBufferWithBytes:w_o length:w_o_bytes options:MTLResourceStorageModeShared];
+            [gpu->gqa_wo[layer_idx] retain];
+            gpu->gqa_wo_cap[layer_idx] = w_o_bytes;
+        } else {
+            memcpy([gpu->gqa_wo[layer_idx] contents], w_o, w_o_bytes);
+        }
+    }
+    if (q_norm && q_norm_bytes > 0) {
+        if (!gpu->gqa_q_norm || gpu->gqa_q_norm_cap < q_norm_bytes) {
+            if (gpu->gqa_q_norm) { [gpu->gqa_q_norm release]; gpu->gqa_q_norm = nil; }
+            gpu->gqa_q_norm = [gpu->device newBufferWithBytes:q_norm length:q_norm_bytes options:MTLResourceStorageModeShared];
+            [gpu->gqa_q_norm retain];
+            gpu->gqa_q_norm_cap = q_norm_bytes;
+        } else {
+            memcpy([gpu->gqa_q_norm contents], q_norm, q_norm_bytes);
+        }
+    }
+    if (k_norm && k_norm_bytes > 0) {
+        if (!gpu->gqa_k_norm || gpu->gqa_k_norm_cap < k_norm_bytes) {
+            if (gpu->gqa_k_norm) { [gpu->gqa_k_norm release]; gpu->gqa_k_norm = nil; }
+            gpu->gqa_k_norm = [gpu->device newBufferWithBytes:k_norm length:k_norm_bytes options:MTLResourceStorageModeShared];
+            [gpu->gqa_k_norm retain];
+            gpu->gqa_k_norm_cap = k_norm_bytes;
+        } else {
+            memcpy([gpu->gqa_k_norm contents], k_norm, k_norm_bytes);
+        }
     }
     return 0;
 }
@@ -224,12 +256,12 @@ int metal_gqa_load_weights(MetalGpu* gpu,
 // ── Dispatch fused GQA (QKV + RoPE + attention + Q-gate) ──────────────────
 
 int metal_fused_gqa(
-    MetalGpu* gpu,
+    MetalGpu* gpu, uint32_t layer_idx,
     const float* h, uint32_t pos, uint32_t seq_len, uint32_t max_seq,
     float* k_cache, float* v_cache, size_t kv_bytes,
     float* attn_out)
 {
-    if (!gpu) return -1;
+    if (!gpu || layer_idx >= 40) return -1;
 
     // Ensure KV cache buffers (lazy alloc, resized if needed)
     if (!gpu->gqa_k || gpu->gqa_kv_cap < kv_bytes) {
@@ -239,10 +271,17 @@ int metal_fused_gqa(
         [gpu->gqa_k retain]; [gpu->gqa_v retain];
         gpu->gqa_kv_cap = kv_bytes;
     }
+    // active_kv_bytes optimization: only copy the active portion of KV cache to/from GPU
+    size_t bytes_per_token = max_seq > 0 ? kv_bytes / max_seq : 0;
+    size_t active_kv_bytes = (pos + seq_len) * bytes_per_token;
+    if (active_kv_bytes > kv_bytes || active_kv_bytes == 0) {
+        active_kv_bytes = kv_bytes;
+    }
+
     // Copy input data to persistent buffers
     memcpy([gpu->gqa_h contents], h, 2048*sizeof(float));
-    memcpy([gpu->gqa_k contents], k_cache, kv_bytes);
-    memcpy([gpu->gqa_v contents], v_cache, kv_bytes);
+    memcpy([gpu->gqa_k contents], k_cache, active_kv_bytes);
+    memcpy([gpu->gqa_v contents], v_cache, active_kv_bytes);
 
     // Pipeline (cached)
     if (!gpu->pipe_gqa) {
@@ -255,7 +294,7 @@ int metal_fused_gqa(
     id<MTLCommandBuffer> cmd = [gpu->queue commandBuffer];
     id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
     [enc setComputePipelineState:gpu->pipe_gqa];
-    [enc setBuffer:gpu->gqa_w    offset:0 atIndex:0];  // f16 W_qkv
+    [enc setBuffer:gpu->gqa_w[layer_idx] offset:0 atIndex:0];  // f16 W_qkv
     [enc setBuffer:gpu->gqa_h    offset:0 atIndex:1];  // h
     [enc setBuffer:gpu->gqa_k    offset:0 atIndex:2];  // k_cache
     [enc setBuffer:gpu->gqa_v    offset:0 atIndex:3];  // v_cache
@@ -265,26 +304,30 @@ int metal_fused_gqa(
     [enc setBytes:&seq_len length:4 atIndex:7];
     [enc setBytes:&max_seq length:4 atIndex:8];
     [enc setBuffer:gpu->gqa_out  offset:0 atIndex:9];  // attn_out
+    [enc setBuffer:gpu->gqa_q_norm offset:0 atIndex:10];
+    [enc setBuffer:gpu->gqa_k_norm offset:0 atIndex:11];
     [enc dispatchThreadgroups:MTLSizeMake(16, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
     [enc endEncoding];
     [cmd commit];
     [cmd waitUntilCompleted];
 
-    memcpy(k_cache, [gpu->gqa_k contents], kv_bytes);
-    memcpy(v_cache, [gpu->gqa_v contents], kv_bytes);
+    memcpy(k_cache, [gpu->gqa_k contents], active_kv_bytes);
+    memcpy(v_cache, [gpu->gqa_v contents], active_kv_bytes);
     memcpy(attn_out, [gpu->gqa_out contents], 4096*sizeof(float));
     return 4096;
 }
 
 // ── Dispatch GQA O-proj ─────────────────────────────────────────────────
 
-int metal_gqa_oproj(MetalGpu* gpu,
+int metal_gqa_oproj(MetalGpu* gpu, uint32_t layer_idx,
                     const uint16_t* w_o, size_t w_o_bytes,
                     const float* attn_out,
                     float* output, uint32_t m, uint32_t k) {
-    if (!gpu) return -1;
-    // Load W_o into persistent buffer
-    metal_gqa_load_weights(gpu, NULL, 0, w_o, w_o_bytes);
+    if (!gpu || layer_idx >= 40) return -1;
+    // Load W_o into persistent buffer if provided
+    if (w_o && w_o_bytes > 0) {
+        metal_gqa_load_weights(gpu, layer_idx, NULL, 0, w_o, w_o_bytes, NULL, 0, NULL, 0);
+    }
 
     // Pipeline (cached)
     if (!gpu->pipe_gqa_oproj) {
@@ -302,7 +345,7 @@ int metal_gqa_oproj(MetalGpu* gpu,
     id<MTLCommandBuffer> cmd = [gpu->queue commandBuffer];
     id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
     [enc setComputePipelineState:gpu->pipe_gqa_oproj];
-    [enc setBuffer:gpu->gqa_wo   offset:0 atIndex:0];
+    [enc setBuffer:gpu->gqa_wo[layer_idx] offset:0 atIndex:0];
     [enc setBuffer:gpu->gqa_out  offset:0 atIndex:1];
     [enc setBuffer:out_buf       offset:0 atIndex:2];
     [enc dispatchThreads:MTLSizeMake(m, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
@@ -312,4 +355,24 @@ int metal_gqa_oproj(MetalGpu* gpu,
 
     memcpy(output, [out_buf contents], m * sizeof(float));
     return (int)m;
+}
+
+#include <arm_neon.h>
+void cpu_fast_f16_gemv(const uint16_t* w, const float* x, float* y, size_t m, size_t k) {
+    for (size_t row = 0; row < m; row++) {
+        const float16_t* w_row = (const float16_t*)(w + row * k);
+        float32x4_t sum = vdupq_n_f32(0.0f);
+        size_t j = 0;
+        for (; j + 4 <= k; j += 4) {
+            float16x4_t w_vec = vld1_f16(w_row + j);
+            float32x4_t w_f32 = vcvt_f32_f16(w_vec);
+            float32x4_t x_vec = vld1q_f32(x + j);
+            sum = vfmaq_f32(sum, w_f32, x_vec);
+        }
+        float s = sum[0] + sum[1] + sum[2] + sum[3];
+        for (; j < k; j++) {
+            s += (float)(w_row[j]) * x[j];
+        }
+        y[row] = s;
+    }
 }

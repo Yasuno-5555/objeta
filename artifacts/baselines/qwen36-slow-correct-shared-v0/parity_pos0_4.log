@@ -1,0 +1,260 @@
+Loading HF weights... 22 tensors
+[transformers] The fast path is not available because one of the required library is not installed. Falling back to torch implementation. To install follow https://github.com/fla-org/flash-linear-attention#installation and https://github.com/Dao-AILab/causal-conv1d
+Loading weights:   0%|          | 0/693 [00:00<?, ?it/s]Loading weights:  81%|████████  | 559/693 [00:00<00:00, 5583.35it/s]Loading weights: 100%|██████████| 693/693 [00:00<00:00, 5946.04it/s]
+Vocab: 248320
+Init Rust executor... [objeta] lm_head loaded from lm_head.bin
+[objeta] Metal GQA: disabled pending kernel parity, using CPU fallback
+OK
+Prompt: The meaning of life is -> 5 tokens: [760, 7063, 314, 2199, 369]
+
+Running 5 tokens through both implementations...
+
+── Token 0 (id=760) seq_len=1 ──
+Initial Embedding Norm: HF=0.446885 | Ours=0.446885
+Embedding Cosine Similarity: 1.000000
+
+=== Layer-by-layer comparison ===
+Layer  0 (GQA=False): cos=0.999994 | HF norm=0.8848 Ours norm=0.8853
+Layer  1 (GQA=False): cos=0.999995 | HF norm=1.1566 Ours norm=1.1593
+Layer  2 (GQA=False): cos=0.999996 | HF norm=2.2289 Ours norm=2.2299
+Layer  3 (GQA=True): cos=0.999972 | HF norm=1.4760 Ours norm=1.4721
+Layer  4 (GQA=False): cos=0.999977 | HF norm=1.5367 Ours norm=1.5342
+Layer  5 (GQA=False): cos=0.999979 | HF norm=1.6427 Ours norm=1.6396
+Layer  6 (GQA=False): cos=0.999998 | HF norm=11.6051 Ours norm=11.6197
+Layer  7 (GQA=True): cos=0.999994 | HF norm=7.3309 Ours norm=7.3582
+Layer  8 (GQA=False): cos=0.999991 | HF norm=6.6284 Ours norm=6.6423
+Layer  9 (GQA=False): cos=0.999986 | HF norm=6.5541 Ours norm=6.5540
+Layer 10 (GQA=False): cos=0.999998 | HF norm=40.1171 Ours norm=40.1572
+Layer 11 (GQA=True): cos=0.999999 | HF norm=40.4835 Ours norm=40.4291
+Layer 12 (GQA=False): cos=0.999998 | HF norm=40.6923 Ours norm=40.6957
+Layer 13 (GQA=False): cos=0.999999 | HF norm=40.7061 Ours norm=40.6902
+Layer 14 (GQA=False): cos=0.999995 | HF norm=40.8987 Ours norm=40.9210
+Layer 15 (GQA=True): cos=0.999992 | HF norm=40.9190 Ours norm=40.9974
+Layer 16 (GQA=False): cos=0.999991 | HF norm=40.8980 Ours norm=40.9310
+Layer 17 (GQA=False): cos=0.999989 | HF norm=40.9228 Ours norm=40.9229
+Layer 18 (GQA=False): cos=0.999991 | HF norm=41.0250 Ours norm=40.9984
+Layer 19 (GQA=True): cos=0.999990 | HF norm=40.9892 Ours norm=40.9521
+Layer 20 (GQA=False): cos=0.999991 | HF norm=40.9866 Ours norm=40.9167
+Layer 21 (GQA=False): cos=0.999993 | HF norm=40.9659 Ours norm=40.8521
+Layer 22 (GQA=False): cos=0.999990 | HF norm=41.2197 Ours norm=41.1110
+Layer 23 (GQA=True): cos=0.999988 | HF norm=41.2457 Ours norm=41.1108
+Layer 24 (GQA=False): cos=0.999988 | HF norm=41.1985 Ours norm=40.9758
+Layer 25 (GQA=False): cos=0.999986 | HF norm=41.1828 Ours norm=40.9074
+Layer 26 (GQA=False): cos=0.999988 | HF norm=41.2731 Ours norm=40.9831
+Layer 27 (GQA=True): cos=0.999981 | HF norm=41.0635 Ours norm=40.6871
+Layer 28 (GQA=False): cos=0.999972 | HF norm=40.9860 Ours norm=40.5101
+Layer 29 (GQA=False): cos=0.999958 | HF norm=40.9390 Ours norm=40.3684
+Layer 30 (GQA=False): cos=0.999945 | HF norm=40.9584 Ours norm=40.2952
+Layer 31 (GQA=True): cos=0.972579 | HF norm=3.9435 Ours norm=4.0848
+Layer 32 (GQA=False): cos=0.978028 | HF norm=3.6469 Ours norm=3.7477
+Layer 33 (GQA=False): cos=0.984620 | HF norm=3.9277 Ours norm=4.0332
+Layer 34 (GQA=False): cos=0.991330 | HF norm=4.5682 Ours norm=4.4995
+Layer 35 (GQA=True): cos=0.992071 | HF norm=4.9683 Ours norm=4.8548
+Layer 36 (GQA=False): cos=0.992536 | HF norm=5.1409 Ours norm=5.0454
+Layer 37 (GQA=False): cos=0.993264 | HF norm=5.4389 Ours norm=5.4707
+Layer 38 (GQA=False): cos=0.996914 | HF norm=8.4044 Ours norm=8.3302
+Layer 39 (GQA=True): cos=0.992732 | HF norm=6.0345 Ours norm=6.0881
+  cos(hf, ours) after 40L: 0.992732
+  HF norm: 6.0345  Ours norm: 6.0881
+  HF time: 11.8s
+
+── Token 1 (id=7063) seq_len=2 ──
+Initial Embedding Norm: HF=0.538095 | Ours=0.538095
+Embedding Cosine Similarity: 1.000000
+
+=== Layer-by-layer comparison ===
+Layer  0 (GQA=False): cos=0.999990 | HF norm=1.0020 Ours norm=1.0012
+Layer  1 (GQA=False): cos=0.999988 | HF norm=1.0897 Ours norm=1.0894
+Layer  2 (GQA=False): cos=0.999988 | HF norm=1.4409 Ours norm=1.4424
+Layer  3 (GQA=True): cos=0.999985 | HF norm=1.3299 Ours norm=1.3290
+Layer  4 (GQA=False): cos=0.999981 | HF norm=1.5748 Ours norm=1.5747
+Layer  5 (GQA=False): cos=0.999981 | HF norm=1.6223 Ours norm=1.6238
+Layer  6 (GQA=False): cos=0.999974 | HF norm=1.7502 Ours norm=1.7519
+Layer  7 (GQA=True): cos=0.999966 | HF norm=1.6130 Ours norm=1.6151
+Layer  8 (GQA=False): cos=0.999975 | HF norm=1.6973 Ours norm=1.7002
+Layer  9 (GQA=False): cos=0.999976 | HF norm=1.9048 Ours norm=1.9052
+Layer 10 (GQA=False): cos=0.999977 | HF norm=2.2330 Ours norm=2.2363
+Layer 11 (GQA=True): cos=0.999972 | HF norm=2.1217 Ours norm=2.1225
+Layer 12 (GQA=False): cos=0.999970 | HF norm=2.1524 Ours norm=2.1536
+Layer 13 (GQA=False): cos=0.999972 | HF norm=2.2101 Ours norm=2.2101
+Layer 14 (GQA=False): cos=0.999974 | HF norm=2.3043 Ours norm=2.3048
+Layer 15 (GQA=True): cos=0.999969 | HF norm=2.1973 Ours norm=2.1974
+Layer 16 (GQA=False): cos=0.999973 | HF norm=2.3895 Ours norm=2.3901
+Layer 17 (GQA=False): cos=0.999969 | HF norm=2.2992 Ours norm=2.2987
+Layer 18 (GQA=False): cos=0.999967 | HF norm=2.3730 Ours norm=2.3720
+Layer 19 (GQA=True): cos=0.999963 | HF norm=2.4765 Ours norm=2.4776
+Layer 20 (GQA=False): cos=0.999963 | HF norm=2.5688 Ours norm=2.5672
+Layer 21 (GQA=False): cos=0.999965 | HF norm=2.8101 Ours norm=2.8115
+Layer 22 (GQA=False): cos=0.999962 | HF norm=3.0988 Ours norm=3.1001
+Layer 23 (GQA=True): cos=0.999961 | HF norm=3.1353 Ours norm=3.1355
+Layer 24 (GQA=False): cos=0.999959 | HF norm=3.0963 Ours norm=3.0971
+Layer 25 (GQA=False): cos=0.999961 | HF norm=3.2216 Ours norm=3.2227
+Layer 26 (GQA=False): cos=0.999957 | HF norm=3.2097 Ours norm=3.2124
+Layer 27 (GQA=True): cos=0.999960 | HF norm=3.3668 Ours norm=3.3666
+Layer 28 (GQA=False): cos=0.999971 | HF norm=4.0128 Ours norm=4.0140
+Layer 29 (GQA=False): cos=0.999955 | HF norm=3.5784 Ours norm=3.5722
+Layer 30 (GQA=False): cos=0.999962 | HF norm=4.0111 Ours norm=4.0176
+Layer 31 (GQA=True): cos=0.999958 | HF norm=3.9457 Ours norm=3.9540
+Layer 32 (GQA=False): cos=0.999787 | HF norm=4.5042 Ours norm=4.4989
+Layer 33 (GQA=False): cos=0.999669 | HF norm=5.2784 Ours norm=5.2651
+Layer 34 (GQA=False): cos=0.999550 | HF norm=6.2568 Ours norm=6.2083
+Layer 35 (GQA=True): cos=0.999550 | HF norm=5.8609 Ours norm=5.8351
+Layer 36 (GQA=False): cos=0.999535 | HF norm=6.6872 Ours norm=6.6632
+Layer 37 (GQA=False): cos=0.999650 | HF norm=7.9114 Ours norm=7.8929
+Layer 38 (GQA=False): cos=0.999761 | HF norm=10.8229 Ours norm=10.8474
+Layer 39 (GQA=True): cos=0.999572 | HF norm=9.4299 Ours norm=9.5094
+  cos(hf, ours) after 40L: 0.999572
+  HF norm: 9.4299  Ours norm: 9.5094
+  HF time: 12.5s
+
+── Token 2 (id=314) seq_len=3 ──
+Initial Embedding Norm: HF=0.346198 | Ours=0.346198
+Embedding Cosine Similarity: 1.000000
+
+=== Layer-by-layer comparison ===
+Layer  0 (GQA=False): cos=0.999994 | HF norm=0.6403 Ours norm=0.6384
+Layer  1 (GQA=False): cos=0.999988 | HF norm=0.7205 Ours norm=0.7196
+Layer  2 (GQA=False): cos=0.999985 | HF norm=0.9458 Ours norm=0.9461
+Layer  3 (GQA=True): cos=0.999976 | HF norm=0.9693 Ours norm=0.9657
+Layer  4 (GQA=False): cos=0.999973 | HF norm=1.1532 Ours norm=1.1498
+Layer  5 (GQA=False): cos=0.999977 | HF norm=1.1994 Ours norm=1.1978
+Layer  6 (GQA=False): cos=0.999979 | HF norm=1.2846 Ours norm=1.2846
+Layer  7 (GQA=True): cos=0.999976 | HF norm=1.2326 Ours norm=1.2319
+Layer  8 (GQA=False): cos=0.999972 | HF norm=1.2781 Ours norm=1.2783
+Layer  9 (GQA=False): cos=0.999975 | HF norm=1.4545 Ours norm=1.4549
+Layer 10 (GQA=False): cos=0.999971 | HF norm=1.6870 Ours norm=1.6850
+Layer 11 (GQA=True): cos=0.999967 | HF norm=1.6951 Ours norm=1.6933
+Layer 12 (GQA=False): cos=0.999966 | HF norm=1.7114 Ours norm=1.7086
+Layer 13 (GQA=False): cos=0.999967 | HF norm=1.7132 Ours norm=1.7120
+Layer 14 (GQA=False): cos=0.999964 | HF norm=1.7466 Ours norm=1.7445
+Layer 15 (GQA=True): cos=0.999965 | HF norm=1.7257 Ours norm=1.7247
+Layer 16 (GQA=False): cos=0.999966 | HF norm=1.8937 Ours norm=1.8950
+Layer 17 (GQA=False): cos=0.999959 | HF norm=1.8194 Ours norm=1.8196
+Layer 18 (GQA=False): cos=0.999954 | HF norm=1.8236 Ours norm=1.8234
+Layer 19 (GQA=True): cos=0.999961 | HF norm=2.1697 Ours norm=2.1735
+Layer 20 (GQA=False): cos=0.999963 | HF norm=2.1829 Ours norm=2.1819
+Layer 21 (GQA=False): cos=0.999964 | HF norm=2.4823 Ours norm=2.4756
+Layer 22 (GQA=False): cos=0.999944 | HF norm=2.5023 Ours norm=2.4948
+Layer 23 (GQA=True): cos=0.999940 | HF norm=2.6873 Ours norm=2.6850
+Layer 24 (GQA=False): cos=0.999918 | HF norm=2.5678 Ours norm=2.5682
+Layer 25 (GQA=False): cos=0.999935 | HF norm=2.7926 Ours norm=2.7912
+Layer 26 (GQA=False): cos=0.999928 | HF norm=2.6784 Ours norm=2.6742
+Layer 27 (GQA=True): cos=0.999941 | HF norm=2.9717 Ours norm=2.9706
+Layer 28 (GQA=False): cos=0.999964 | HF norm=3.5811 Ours norm=3.5762
+Layer 29 (GQA=False): cos=0.999955 | HF norm=3.5230 Ours norm=3.5196
+Layer 30 (GQA=False): cos=0.999956 | HF norm=3.7358 Ours norm=3.7317
+Layer 31 (GQA=True): cos=0.999958 | HF norm=4.0800 Ours norm=4.0777
+Layer 32 (GQA=False): cos=0.999833 | HF norm=4.6384 Ours norm=4.6353
+Layer 33 (GQA=False): cos=0.999838 | HF norm=5.5168 Ours norm=5.5012
+Layer 34 (GQA=False): cos=0.999801 | HF norm=5.9256 Ours norm=5.8950
+Layer 35 (GQA=True): cos=0.999831 | HF norm=6.8029 Ours norm=6.7411
+Layer 36 (GQA=False): cos=0.999828 | HF norm=7.7177 Ours norm=7.6613
+Layer 37 (GQA=False): cos=0.999839 | HF norm=9.4892 Ours norm=9.4397
+Layer 38 (GQA=False): cos=0.999891 | HF norm=13.6916 Ours norm=13.6832
+Layer 39 (GQA=True): cos=0.999858 | HF norm=14.9506 Ours norm=14.9769
+  cos(hf, ours) after 40L: 0.999858
+  HF norm: 14.9506  Ours norm: 14.9769
+  HF time: 11.7s
+
+── Token 3 (id=2199) seq_len=4 ──
+Initial Embedding Norm: HF=0.491471 | Ours=0.491471
+Embedding Cosine Similarity: 1.000000
+
+=== Layer-by-layer comparison ===
+Layer  0 (GQA=False): cos=0.999990 | HF norm=0.9446 Ours norm=0.9446
+Layer  1 (GQA=False): cos=0.999986 | HF norm=1.0871 Ours norm=1.0889
+Layer  2 (GQA=False): cos=0.999985 | HF norm=1.3099 Ours norm=1.3107
+Layer  3 (GQA=True): cos=0.999977 | HF norm=1.1797 Ours norm=1.1812
+Layer  4 (GQA=False): cos=0.999979 | HF norm=1.3284 Ours norm=1.3287
+Layer  5 (GQA=False): cos=0.999976 | HF norm=1.3570 Ours norm=1.3588
+Layer  6 (GQA=False): cos=0.999976 | HF norm=1.5528 Ours norm=1.5545
+Layer  7 (GQA=True): cos=0.999967 | HF norm=1.3793 Ours norm=1.3807
+Layer  8 (GQA=False): cos=0.999965 | HF norm=1.4416 Ours norm=1.4437
+Layer  9 (GQA=False): cos=0.999967 | HF norm=1.6938 Ours norm=1.6965
+Layer 10 (GQA=False): cos=0.999969 | HF norm=2.0554 Ours norm=2.0582
+Layer 11 (GQA=True): cos=0.999961 | HF norm=1.9254 Ours norm=1.9292
+Layer 12 (GQA=False): cos=0.999959 | HF norm=1.8829 Ours norm=1.8854
+Layer 13 (GQA=False): cos=0.999959 | HF norm=1.9224 Ours norm=1.9254
+Layer 14 (GQA=False): cos=0.999963 | HF norm=2.0773 Ours norm=2.0786
+Layer 15 (GQA=True): cos=0.999952 | HF norm=1.9062 Ours norm=1.9078
+Layer 16 (GQA=False): cos=0.999951 | HF norm=1.9733 Ours norm=1.9740
+Layer 17 (GQA=False): cos=0.999950 | HF norm=1.9345 Ours norm=1.9361
+Layer 18 (GQA=False): cos=0.999951 | HF norm=2.0397 Ours norm=2.0411
+Layer 19 (GQA=True): cos=0.999944 | HF norm=2.0722 Ours norm=2.0772
+Layer 20 (GQA=False): cos=0.999947 | HF norm=2.2366 Ours norm=2.2398
+Layer 21 (GQA=False): cos=0.999954 | HF norm=2.5766 Ours norm=2.5828
+Layer 22 (GQA=False): cos=0.999949 | HF norm=2.8934 Ours norm=2.8969
+Layer 23 (GQA=True): cos=0.999944 | HF norm=2.9037 Ours norm=2.9049
+Layer 24 (GQA=False): cos=0.999938 | HF norm=2.7715 Ours norm=2.7708
+Layer 25 (GQA=False): cos=0.999941 | HF norm=2.9742 Ours norm=2.9704
+Layer 26 (GQA=False): cos=0.999948 | HF norm=3.1134 Ours norm=3.1119
+Layer 27 (GQA=True): cos=0.999943 | HF norm=3.2517 Ours norm=3.2493
+Layer 28 (GQA=False): cos=0.999954 | HF norm=3.4982 Ours norm=3.4999
+Layer 29 (GQA=False): cos=0.999955 | HF norm=3.5803 Ours norm=3.5830
+Layer 30 (GQA=False): cos=0.999962 | HF norm=4.3101 Ours norm=4.3030
+Layer 31 (GQA=True): cos=0.999963 | HF norm=4.2459 Ours norm=4.2486
+Layer 32 (GQA=False): cos=0.999886 | HF norm=4.9013 Ours norm=4.8970
+Layer 33 (GQA=False): cos=0.999880 | HF norm=5.6264 Ours norm=5.6052
+Layer 34 (GQA=False): cos=0.999864 | HF norm=6.8128 Ours norm=6.7933
+Layer 35 (GQA=True): cos=0.999801 | HF norm=6.0470 Ours norm=6.0109
+Layer 36 (GQA=False): cos=0.999815 | HF norm=6.8600 Ours norm=6.8147
+Layer 37 (GQA=False): cos=0.999848 | HF norm=8.5608 Ours norm=8.5208
+Layer 38 (GQA=False): cos=0.999893 | HF norm=11.6342 Ours norm=11.6462
+Layer 39 (GQA=True): cos=0.999818 | HF norm=11.1062 Ours norm=11.1293
+  cos(hf, ours) after 40L: 0.999818
+  HF norm: 11.1062  Ours norm: 11.1293
+  HF time: 11.5s
+
+── Token 4 (id=369) seq_len=5 ──
+Initial Embedding Norm: HF=0.394219 | Ours=0.394219
+Embedding Cosine Similarity: 1.000000
+
+=== Layer-by-layer comparison ===
+Layer  0 (GQA=False): cos=0.999997 | HF norm=0.6926 Ours norm=0.6927
+Layer  1 (GQA=False): cos=0.999995 | HF norm=0.8157 Ours norm=0.8165
+Layer  2 (GQA=False): cos=0.999994 | HF norm=1.0500 Ours norm=1.0493
+Layer  3 (GQA=True): cos=0.999988 | HF norm=1.0776 Ours norm=1.0791
+Layer  4 (GQA=False): cos=0.999986 | HF norm=1.1941 Ours norm=1.1963
+Layer  5 (GQA=False): cos=0.999973 | HF norm=1.1708 Ours norm=1.1757
+Layer  6 (GQA=False): cos=0.999974 | HF norm=1.4045 Ours norm=1.4119
+Layer  7 (GQA=True): cos=0.999970 | HF norm=1.2579 Ours norm=1.2633
+Layer  8 (GQA=False): cos=0.999967 | HF norm=1.2694 Ours norm=1.2712
+Layer  9 (GQA=False): cos=0.999969 | HF norm=1.4713 Ours norm=1.4751
+Layer 10 (GQA=False): cos=0.999971 | HF norm=1.7147 Ours norm=1.7187
+Layer 11 (GQA=True): cos=0.999968 | HF norm=1.6656 Ours norm=1.6702
+Layer 12 (GQA=False): cos=0.999964 | HF norm=1.6290 Ours norm=1.6322
+Layer 13 (GQA=False): cos=0.999957 | HF norm=1.6692 Ours norm=1.6724
+Layer 14 (GQA=False): cos=0.999962 | HF norm=1.8470 Ours norm=1.8535
+Layer 15 (GQA=True): cos=0.999954 | HF norm=1.7404 Ours norm=1.7463
+Layer 16 (GQA=False): cos=0.999953 | HF norm=1.8003 Ours norm=1.8046
+Layer 17 (GQA=False): cos=0.999950 | HF norm=1.8269 Ours norm=1.8294
+Layer 18 (GQA=False): cos=0.999950 | HF norm=1.8221 Ours norm=1.8250
+Layer 19 (GQA=True): cos=0.999952 | HF norm=1.9858 Ours norm=1.9894
+Layer 20 (GQA=False): cos=0.999945 | HF norm=2.1272 Ours norm=2.1271
+Layer 21 (GQA=False): cos=0.999944 | HF norm=2.4072 Ours norm=2.4101
+Layer 22 (GQA=False): cos=0.999938 | HF norm=2.4991 Ours norm=2.5049
+Layer 23 (GQA=True): cos=0.999945 | HF norm=2.7108 Ours norm=2.7143
+Layer 24 (GQA=False): cos=0.999928 | HF norm=2.5745 Ours norm=2.5773
+Layer 25 (GQA=False): cos=0.999945 | HF norm=2.8728 Ours norm=2.8800
+Layer 26 (GQA=False): cos=0.999942 | HF norm=2.8712 Ours norm=2.8807
+Layer 27 (GQA=True): cos=0.999951 | HF norm=3.1438 Ours norm=3.1519
+Layer 28 (GQA=False): cos=0.999965 | HF norm=3.6452 Ours norm=3.6554
+Layer 29 (GQA=False): cos=0.999962 | HF norm=3.6273 Ours norm=3.6395
+Layer 30 (GQA=False): cos=0.999963 | HF norm=3.9204 Ours norm=3.9299
+Layer 31 (GQA=True): cos=0.999966 | HF norm=4.4380 Ours norm=4.4445
+Layer 32 (GQA=False): cos=0.999880 | HF norm=5.1179 Ours norm=5.1145
+Layer 33 (GQA=False): cos=0.999891 | HF norm=6.0599 Ours norm=6.0698
+Layer 34 (GQA=False): cos=0.999868 | HF norm=6.7385 Ours norm=6.7589
+Layer 35 (GQA=True): cos=0.999875 | HF norm=7.2735 Ours norm=7.2703
+Layer 36 (GQA=False): cos=0.999871 | HF norm=8.1344 Ours norm=8.1147
+Layer 37 (GQA=False): cos=0.999889 | HF norm=9.8838 Ours norm=9.8746
+Layer 38 (GQA=False): cos=0.999915 | HF norm=13.6954 Ours norm=13.7067
+Layer 39 (GQA=True): cos=0.999875 | HF norm=15.5959 Ours norm=15.6996
+  cos(hf, ours) after 40L: 0.999875
+  HF norm: 15.5959  Ours norm: 15.6996
+  HF time: 10.7s
+
+============================================================
+If cos drops below 0.99 by first token, the forward pass has bugs.
+If cos stays high for 1 token but drops across tokens, state handling is buggy.
+============================================================

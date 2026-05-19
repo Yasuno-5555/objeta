@@ -1,0 +1,26 @@
+ M HANDOFF.md
+ M crates/objeta-os/src/lib.rs
+ M crates/objeta-qwen36-executor/src/metal_dispatch.rs
+ M crates/objeta-qwen36-executor/src/metal_wrapper.m
+ M crates/objeta-qwen36-executor/src/moe_dispatch.rs
+ M crates/objeta-qwen36-executor/src/qwen36_forward.rs
+ M docs/DESIGN.md
+ M docs/README.md
+ M experiments/__pycache__/qwen36_executor.cpython-313.pyc
+ M experiments/convert_q4_to_bin.py
+ M experiments/qwen36_full_rust.py
+ M experiments/results/qwen36_io.json
+ M kernels/metal/fused_gqa.metal
+?? artifacts/
+?? docs/CURRENT_STATUS_2026_05_18.md
+?? docs/OS_RUNTIME_RUST_PORT.md
+?? experiments/__pycache__/a1_full_compare.cpython-313.pyc
+?? experiments/__pycache__/compare_prefill_logits.cpython-313.pyc
+?? experiments/__pycache__/qwen36_full_rust.cpython-313.pyc
+?? experiments/a1_component_compare.py
+?? experiments/a1_full_compare.py
+?? experiments/bench_qwen36_os.py
+?? experiments/compare_prefill_logits.py
+?? experiments/integrate_qwen36.py
+?? experiments/results/qwen36_os_bench.json
+?? scripts/

@@ -10,6 +10,8 @@ using namespace metal;
 constant uint N_Q   = 16;
 constant uint N_KV  = 2;
 constant uint HD    = 256;
+constant uint ROT   = 64;
+constant uint ROT2  = 32;
 constant uint REP   = 8;
 constant uint D     = 2048;
 constant uint Q_SZ  = 8192;  // Q(4096) + Q-gate(4096)
@@ -28,14 +30,14 @@ kernel void fused_gqa(
     constant uint&     seq_len  [[buffer(7)]],
     constant uint&     max_seq  [[buffer(8)]],
     device float*       attn_out [[buffer(9)]],
+    device const float* q_norm   [[buffer(10)]],
+    device const float* k_norm   [[buffer(11)]],
     uint               q_head   [[threadgroup_position_in_grid]],
     uint               tid      [[thread_position_in_threadgroup]],
     threadgroup float* tg       [[threadgroup(0)]]
 )
 {
     uint kv_head = q_head / REP;
-    uint hd2     = HD / 2;
-
     // ── QKV projection (f16 weights → f32 accum) ──
     uint q_row  = q_head * HD + tid;
     uint qg_row = N_Q * HD + q_head * HD + tid;
@@ -54,29 +56,57 @@ kernel void fused_gqa(
     float v_val = 0.0;
     for (uint j = 0; j < D; j++) { v_val += float(W_qkv[v_row * D + j]) * h[j]; }
 
-    // ── RoPE: share Q values via tg, compute rotation ──
+    // ── QK normalization (RMSNorm per head) ──
+    tg[tid] = q_val * q_val;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (tid == 0) {
+        float ss = 0.0f;
+        for (uint d = 0; d < HD; d++) ss += tg[d];
+        tg[HD] = rsqrt(ss / float(HD) + 1e-6f);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    q_val = q_val * tg[HD] * (1.0f + q_norm[tid]);
+
+    tg[tid] = k_val * k_val;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (tid == 0) {
+        float ss = 0.0f;
+        for (uint d = 0; d < HD; d++) ss += tg[d];
+        tg[HD] = rsqrt(ss / float(HD) + 1e-6f);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    k_val = k_val * tg[HD] * (1.0f + k_norm[tid]);
+
+    // ── RoPE: partial RoPE on first 64 dims only ──
     tg[tid] = q_val;
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    float cos_v = cos_tab[pos * hd2 + (tid % hd2)];
-    float sin_v = sin_tab[pos * hd2 + (tid % hd2)];
-    float q_rot;
-
-    if (tid < hd2) {
-        q_rot = q_val * cos_v - tg[tid + hd2] * sin_v;
-    } else {
-        q_rot = tg[tid - hd2] * sin_v + q_val * cos_v;
+    float q_rot = q_val;
+    if (tid < ROT) {
+        uint pair = tid % ROT2;
+        float cos_v = cos_tab[pos * ROT2 + pair];
+        float sin_v = sin_tab[pos * ROT2 + pair];
+        if (tid < ROT2) {
+            q_rot = q_val * cos_v - tg[tid + ROT2] * sin_v;
+        } else {
+            q_rot = tg[tid - ROT2] * sin_v + q_val * cos_v;
+        }
     }
 
     // ── RoPE for K ──
     tg[tid] = k_val;
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    float k_rot;
-    if (tid < hd2) {
-        k_rot = k_val * cos_v - tg[tid + hd2] * sin_v;
-    } else {
-        k_rot = tg[tid - hd2] * sin_v + k_val * cos_v;
+    float k_rot = k_val;
+    if (tid < ROT) {
+        uint pair = tid % ROT2;
+        float cos_v = cos_tab[pos * ROT2 + pair];
+        float sin_v = sin_tab[pos * ROT2 + pair];
+        if (tid < ROT2) {
+            k_rot = k_val * cos_v - tg[tid + ROT2] * sin_v;
+        } else {
+            k_rot = tg[tid - ROT2] * sin_v + k_val * cos_v;
+        }
     }
 
     // ── Write KV cache: [kv_head][pos][dim] ──

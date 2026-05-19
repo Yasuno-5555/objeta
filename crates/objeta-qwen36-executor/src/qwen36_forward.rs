@@ -15,15 +15,23 @@ extern "C" {
     // Init Metal GQA resources (RoPE tables, once)
     fn lko_metal_gqa_init(rope_cos: *const f32, rope_sin: *const f32, max_seq: i32) -> i32;
     // Load per-layer GQA weights into persistent Metal buffers
-    fn lko_metal_gqa_load_weights(w_qkv: *const u16, w_qkv_bytes: i32, w_o: *const u16, w_o_bytes: i32) -> i32;
+    fn lko_metal_gqa_load_weights(
+        layer_idx: i32,
+        w_qkv: *const u16, w_qkv_bytes: i32,
+        w_o: *const u16, w_o_bytes: i32,
+        q_norm: *const f32, q_norm_len: i32,
+        k_norm: *const f32, k_norm_len: i32,
+    ) -> i32;
     // Dispatch fused GQA (QKV + RoPE + attention + Q-gate) — returns attn_out (4096 f32)
     fn lko_metal_fused_gqa(
+        layer_idx: i32,
         h: *const f32, pos: i32, seq_len: i32, max_seq: i32,
         k_cache: *mut f32, v_cache: *mut f32, kv_bytes: i32,
         attn_out: *mut f32,
     ) -> i32;
     // Dispatch GQA O-proj: output = W_o @ attn_out (f16 weights, f32 attn_out → f32 output)
     fn lko_metal_gqa_oproj(
+        layer_idx: i32,
         w_o: *const u16, w_o_bytes: i32,
         attn_out: *const f32,
         output: *mut f32, m: i32, k: i32,
@@ -32,21 +40,16 @@ extern "C" {
 
 /// Try Metal fused GQA. Returns Some(output) on success, None if Metal unavailable.
 fn gqa_metal_try(
+    layer_idx: usize,
     w_qkv: &[u16], w_o: &[u16], h: &[f32],
     pos: u32, seq_len: u32, max_seq: u32,
     k_cache: &mut [f32], v_cache: &mut [f32],
     first_call: &mut bool,
 ) -> Option<Vec<f32>> {
-    let ok = unsafe {
-        lko_metal_gqa_load_weights(
-            w_qkv.as_ptr(), (w_qkv.len() * 2) as i32,
-            w_o.as_ptr(), (w_o.len() * 2) as i32,
-        ) == 0
-    };
-    if !ok { if *first_call { eprintln!("[objeta] Metal GQA: load_weights failed"); *first_call = false; } return None; }
     let mut attn_out = vec![0.0f32; 4096];
     let ok = unsafe {
         lko_metal_fused_gqa(
+            layer_idx as i32,
             h.as_ptr(), pos as i32, seq_len as i32, max_seq as i32,
             k_cache.as_mut_ptr(), v_cache.as_mut_ptr(), (k_cache.len() * 4) as i32,
             attn_out.as_mut_ptr(),
@@ -56,7 +59,8 @@ fn gqa_metal_try(
     let mut output = vec![0.0f32; HDIM];
     let ok = unsafe {
         lko_metal_gqa_oproj(
-            w_o.as_ptr(), (w_o.len() * 2) as i32,
+            layer_idx as i32,
+            std::ptr::null(), 0, // pass null to use pre-loaded GPU weight buffer!
             attn_out.as_ptr(), output.as_mut_ptr(), HDIM as i32, 4096i32,
         ) == HDIM as i32
     };
@@ -65,13 +69,16 @@ fn gqa_metal_try(
 }
 
 fn rope_cache(max_seq: usize, hd: usize) -> (Vec<f32>, Vec<f32>) {
-    let mut cos = vec![0.0f32; max_seq * hd / 2];
-    let mut sin = vec![0.0f32; max_seq * hd / 2];
+    // Qwen3.6-35B-A3B uses partial_rotary_factor = 0.25, rope_theta = 10_000_000
+    let rotary_dim = (hd as f32 * 0.25) as usize;
+    let half_rot = rotary_dim / 2;
+    let mut cos = vec![0.0f32; max_seq * half_rot];
+    let mut sin = vec![0.0f32; max_seq * half_rot];
     for pos in 0..max_seq {
-        for i in 0..hd/2 {
-            let theta = 1.0 / 10000.0f32.powf(2.0 * i as f32 / hd as f32);
-            cos[pos * hd/2 + i] = (pos as f32 * theta).cos();
-            sin[pos * hd/2 + i] = (pos as f32 * theta).sin();
+        for i in 0..half_rot {
+            let theta = 1.0 / 10000000.0f32.powf(2.0 * i as f32 / rotary_dim as f32);
+            cos[pos * half_rot + i] = (pos as f32 * theta).cos();
+            sin[pos * half_rot + i] = (pos as f32 * theta).sin();
         }
     }
     (cos, sin)
@@ -111,6 +118,10 @@ pub fn gemv_f32(W: &[f32], x: &[f32], M: usize, K: usize) -> Vec<f32> {
     y
 }
 
+extern "C" {
+    fn cpu_fast_f16_gemv(w: *const u16, x: *const f32, y: *mut f32, m: usize, k: usize);
+}
+
 /// Direct f16 GEMV using manual f16→f32 + NEON FMA — zero intermediate allocation.
 /// Reads f16 weights without full f32 conversion buffer. 2x less memory BW.
 pub fn gemv_f16_direct(W: &[u16], x: &[f32], M: usize, K: usize) -> Vec<f32> {
@@ -118,73 +129,29 @@ pub fn gemv_f16_direct(W: &[u16], x: &[f32], M: usize, K: usize) -> Vec<f32> {
     if M < 64 {
         for i in 0..M {
             let row = &W[i * K..(i + 1) * K];
-            y[i] = dot_f16_manual(row, x);
+            unsafe {
+                cpu_fast_f16_gemv(row.as_ptr(), x.as_ptr(), &mut y[i], 1, K);
+            }
         }
     } else {
         y.par_iter_mut().enumerate().for_each(|(i, yi)| {
             let row = &W[i * K..(i + 1) * K];
-            *yi = dot_f16_manual(row, x);
+            unsafe {
+                cpu_fast_f16_gemv(row.as_ptr(), x.as_ptr(), yi as *mut f32, 1, K);
+            }
         });
     }
     y
 }
 
-/// Manual f16→f32 conversion + NEON FMA dot product. No unstable intrinsics.
-#[inline]
-fn dot_f16_manual(a: &[u16], b: &[f32]) -> f32 {
-    let n = a.len();
-    #[cfg(target_arch = "aarch64")]
-    unsafe {
-        use std::arch::aarch64::*;
-        let mut sum = vdupq_n_f32(0.0);
-        let mut j = 0usize;
-        // Process 8 f16 at a time: unpack to f32 then FMA
-        while j + 8 <= n {
-            // Load 8 f32 inputs
-            let x0 = vld1q_f32(b.as_ptr().add(j));
-            let x1 = vld1q_f32(b.as_ptr().add(j + 4));
-            // Convert 8 f16→f32 manually
-            let w0 = f16_to_f32(a[j]);
-            let w1 = f16_to_f32(a[j+1]);
-            let w2 = f16_to_f32(a[j+2]);
-            let w3 = f16_to_f32(a[j+3]);
-            let w4 = f16_to_f32(a[j+4]);
-            let w5 = f16_to_f32(a[j+5]);
-            let w6 = f16_to_f32(a[j+6]);
-            let w7 = f16_to_f32(a[j+7]);
-            sum = vfmaq_f32(sum, vld1q_f32([w0,w1,w2,w3].as_ptr()), x0);
-            sum = vfmaq_f32(sum, vld1q_f32([w4,w5,w6,w7].as_ptr()), x1);
-            j += 8;
-        }
-        while j + 4 <= n {
-            let w0 = f16_to_f32(a[j]);
-            let w1 = f16_to_f32(a[j+1]);
-            let w2 = f16_to_f32(a[j+2]);
-            let w3 = f16_to_f32(a[j+3]);
-            let x0 = vld1q_f32(b.as_ptr().add(j));
-            sum = vfmaq_f32(sum, vld1q_f32([w0,w1,w2,w3].as_ptr()), x0);
-            j += 4;
-        }
-        let mut s = vaddvq_f32(sum);
-        while j < n { s += f16_to_f32(a[j]) * b[j]; j += 1; }
-        return s;
-    }
-    #[cfg(not(target_arch = "aarch64"))]
-    { a.iter().zip(b.iter()).map(|(h, x)| f16_to_f32(*h) * x).sum() }
-}
-
 // ── GEMV f16 (f16→f32 conversion + NEON GEMV) ───────────────────────────
 
-pub fn gemv_f16_buf(W: &[u16], x: &[f32], M: usize, K: usize, buf: &mut Vec<f32>) -> Vec<f32> {
-    buf.clear();
-    buf.reserve(M * K);
-    buf.extend(W.iter().map(|&h| f16_to_f32(h)));
-    gemv_f32(buf, x, M, K)
+pub fn gemv_f16_buf(W: &[u16], x: &[f32], M: usize, K: usize, _buf: &mut Vec<f32>) -> Vec<f32> {
+    gemv_f16_direct(W, x, M, K)
 }
 
 pub fn gemv_f16(W: &[u16], x: &[f32], M: usize, K: usize) -> Vec<f32> {
-    let w_f32: Vec<f32> = W.iter().map(|&h| f16_to_f32(h)).collect();
-    gemv_f32(&w_f32, x, M, K)
+    gemv_f16_direct(W, x, M, K)
 }
 
 /// Optimized dot product using NEON where available.
@@ -248,6 +215,14 @@ pub fn rms_norm(x: &[f32], weight: &[f32]) -> Vec<f32> {
     let inv = 1.0 / (msq + 1e-6).sqrt();
     x.iter().zip(weight.iter()).map(|(&v, &w)| v * inv * w).collect()
 }
+
+pub fn rms_norm_offset(x: &[f32], weight: &[f32]) -> Vec<f32> {
+    let n = x.len();
+    let msq: f32 = x.iter().map(|v| v * v).sum::<f32>() / n as f32;
+    let inv = 1.0 / (msq + 1e-6).sqrt();
+    x.iter().zip(weight.iter()).map(|(&v, &w)| v * inv * (1.0 + w)).collect()
+}
+
 
 // ── C API exports for Python ──────────────────────────────────────────────
 
@@ -488,6 +463,7 @@ fn gemv_f16_par(W: &[u16], x: &[f32], M: usize, K: usize) -> Vec<f32> {
 pub fn gqa_attention_fused(
     // Weights (f32, pre-loaded)
     w_qkv: &[u16], w_o: &[u16],
+    q_norm: &[f32], k_norm: &[f32],
     // Input
     h: &[f32],
     // KV cache
@@ -504,38 +480,85 @@ pub fn gqa_attention_fused(
     attn_out: &mut [f32],
     scores: &mut [f32], attn_w: &mut [f32],
 ) {
-    let q_sz = n_heads * head_dim * 2;  // 4096 (Q) + 4096 (Q-gate) = 8192
+    let q_proj_sz = n_heads * head_dim * 2;  // 8192 = query(256) + gate(256) per head
+    let q_sz = n_heads * head_dim;  // 4096
     let k_sz = n_kv * head_dim;  // 512
     let v_sz = n_kv * head_dim;  // 512
-    let total = q_sz + k_sz + v_sz;  // 9216
+    let total = q_proj_sz + k_sz + v_sz;  // 9216
     let K = h.len();
 
     // QKV projection
     qkv_buf[..total].copy_from_slice(&gemv_f16(w_qkv, h, total, K));
 
-    // Split: q(4352), k(512), v(512)
-    let n_q = n_heads * head_dim; // 4096
-    q_buf[..n_q].copy_from_slice(&qkv_buf[..n_q]);
-    let q_gate: Vec<f32> = qkv_buf[n_q..q_sz].iter().map(|&v| 1.0/(1.0+(-v).exp())).collect();
-    k_buf[..k_sz].copy_from_slice(&qkv_buf[q_sz..q_sz + k_sz]);
-    v_buf[..v_sz].copy_from_slice(&qkv_buf[q_sz + k_sz..total]);
+    if objeta_debug_enabled() && pos == seq_len - 1 {
+        let h_norm_val: f32 = h.iter().map(|v| v*v).sum::<f32>().sqrt();
+        let qkv_norm: f32 = qkv_buf[..total].iter().map(|v| v*v).sum::<f32>().sqrt();
+        println!("  [RUST GQA DEBUG] h norm = {:.6}", h_norm_val);
+        println!("  [RUST GQA DEBUG] qkv_buf norm = {:.6}", qkv_norm);
+    }
 
-    // RoPE
-    let half = head_dim / 2;
-    let c = &rope_cos[pos * half..(pos + 1) * half];
-    let s = &rope_sin[pos * half..(pos + 1) * half];
+    // Split q_proj into per-head query/gate chunks matching HF:
+    // q_proj.view(..., 16, 512).chunk(2, dim=-1) -> query[16,256], gate[16,256]
+    let mut q_gate = vec![0.0f32; q_sz];
     for h in 0..n_heads {
-        for i in 0..half {
-            let qe = q_buf[h*head_dim+i]; let qo = q_buf[h*head_dim+half+i];
-            q_buf[h*head_dim+i] = qe*c[i] - qo*s[i];
-            q_buf[h*head_dim+half+i] = qe*s[i] + qo*c[i];
+        let src = h * head_dim * 2;
+        let dst = h * head_dim;
+        q_buf[dst..dst + head_dim].copy_from_slice(&qkv_buf[src..src + head_dim]);
+        for d in 0..head_dim {
+            q_gate[dst + d] = 1.0 / (1.0 + (-qkv_buf[src + head_dim + d]).exp());
+        }
+    }
+    k_buf[..k_sz].copy_from_slice(&qkv_buf[q_proj_sz..q_proj_sz + k_sz]);
+    v_buf[..v_sz].copy_from_slice(&qkv_buf[q_proj_sz + k_sz..total]);
+
+    if objeta_debug_enabled() && pos == seq_len - 1 {
+        let q_proj_norm: f32 = q_buf[..q_sz].iter().map(|v| v*v).sum::<f32>().sqrt();
+        let k_proj_norm: f32 = k_buf[..k_sz].iter().map(|v| v*v).sum::<f32>().sqrt();
+        let v_proj_norm: f32 = v_buf[..v_sz].iter().map(|v| v*v).sum::<f32>().sqrt();
+        println!("  [RUST GQA DEBUG] q_proj norm = {:.6}, k_proj norm = {:.6}, v_proj norm = {:.6}", q_proj_norm, k_proj_norm, v_proj_norm);
+    }
+
+    // Per-head RMSNorm for Q/K, matching HF Qwen3MoeAttention (which uses 1.0 + weight offset).
+    for h in 0..n_heads {
+        let base = h * head_dim;
+        let mut sq = 0.0f32;
+        for d in 0..head_dim { sq += q_buf[base + d] * q_buf[base + d]; }
+        let inv = 1.0 / (sq / head_dim as f32 + 1e-6).sqrt();
+        for d in 0..head_dim { q_buf[base + d] = q_buf[base + d] * inv * (1.0 + q_norm[d]); }
+    }
+    for h in 0..n_kv {
+        let base = h * head_dim;
+        let mut sq = 0.0f32;
+        for d in 0..head_dim { sq += k_buf[base + d] * k_buf[base + d]; }
+        let inv = 1.0 / (sq / head_dim as f32 + 1e-6).sqrt();
+        for d in 0..head_dim { k_buf[base + d] = k_buf[base + d] * inv * (1.0 + k_norm[d]); }
+    }
+
+    if objeta_debug_enabled() && pos == seq_len - 1 {
+        let q_norm_norm: f32 = q_buf[..q_sz].iter().map(|v| v*v).sum::<f32>().sqrt();
+        let k_norm_norm: f32 = k_buf[..k_sz].iter().map(|v| v*v).sum::<f32>().sqrt();
+        println!("  [RUST GQA DEBUG] q_norm norm = {:.6}, k_norm norm = {:.6}", q_norm_norm, k_norm_norm);
+    }
+
+    // RoPE (partial_rotary_factor = 0.25)
+    let rotary_dim = (head_dim as f32 * 0.25) as usize;
+    let half_rot = rotary_dim / 2;
+    let c = &rope_cos[pos * half_rot..(pos + 1) * half_rot];
+    let s = &rope_sin[pos * half_rot..(pos + 1) * half_rot];
+    for h in 0..n_heads {
+        for i in 0..half_rot {
+            let qe = q_buf[h * head_dim + i];
+            let qo = q_buf[h * head_dim + half_rot + i];
+            q_buf[h * head_dim + i] = qe * c[i] - qo * s[i];
+            q_buf[h * head_dim + half_rot + i] = qe * s[i] + qo * c[i];
         }
     }
     for h in 0..n_kv {
-        for i in 0..half {
-            let ke = k_buf[h*head_dim+i]; let ko = k_buf[h*head_dim+half+i];
-            k_buf[h*head_dim+i] = ke*c[i] - ko*s[i];
-            k_buf[h*head_dim+half+i] = ke*s[i] + ko*c[i];
+        for i in 0..half_rot {
+            let ke = k_buf[h * head_dim + i];
+            let ko = k_buf[h * head_dim + half_rot + i];
+            k_buf[h * head_dim + i] = ke * c[i] - ko * s[i];
+            k_buf[h * head_dim + half_rot + i] = ke * s[i] + ko * c[i];
         }
     }
 
@@ -579,9 +602,9 @@ pub fn gqa_attention_fused(
             for d in 0..head_dim { oh[d] += a * vt[d]; }
         }
 
-        // Apply gate: q_gate (4096,) element-wise × attn_out (4096,)
         let g_off = h * head_dim;
         for d in 0..head_dim { oh[d] *= q_gate[g_off + d]; }
+
     }
 
     // Output projection
@@ -603,6 +626,8 @@ pub fn delta_net_fused(
     S_state: &mut [f32],
     ao_out: &mut [f32],
     scratch_f32: &mut Vec<f32>,
+    layer_idx: usize,
+    pos: usize,
 ) {
     let mixed_qkv = gemv_f16_buf(w_qkv, h, 8192, HDIM, scratch_f32);
     let z = gemv_f16_buf(w_z, h, 4096, HDIM, scratch_f32);
@@ -648,6 +673,23 @@ pub fn delta_net_fused(
         (-a_log[i].exp() * sp).exp()
     }).collect();
 
+    if objeta_debug_enabled() && layer_idx == 0 && pos == 0 {
+        let mqkv_norm = mixed_qkv.iter().map(|v| v*v).sum::<f32>().sqrt();
+        let z_norm = z.iter().map(|v| v*v).sum::<f32>().sqrt();
+        let b_norm = b.iter().map(|v| v*v).sum::<f32>().sqrt();
+        let a_vec_norm = a_vec.iter().map(|v| v*v).sum::<f32>().sqrt();
+        let qkv_a_norm = qkv_conv.iter().map(|v| v*v).sum::<f32>().sqrt();
+        let beta_norm = beta.iter().map(|v| v*v).sum::<f32>().sqrt();
+        let exp_g_norm = exp_g.iter().map(|v| v*v).sum::<f32>().sqrt();
+        println!("[RUST DETAILED L0] mqkv norm: {:.6}", mqkv_norm);
+        println!("[RUST DETAILED L0] z norm: {:.6}", z_norm);
+        println!("[RUST DETAILED L0] b norm: {:.6}", b_norm);
+        println!("[RUST DETAILED L0] a_vec norm: {:.6}", a_vec_norm);
+        println!("[RUST DETAILED L0] qkv_a norm: {:.6}", qkv_a_norm);
+        println!("[RUST DETAILED L0] beta norm: {:.6}", beta_norm);
+        println!("[RUST DETAILED L0] exp(g) norm: {:.6}", exp_g_norm);
+    }
+
     // L2 norm q,k
     for h in 0..32 {
         let mut qn = 0.0f32; let mut kn = 0.0f32;
@@ -667,6 +709,21 @@ pub fn delta_net_fused(
     // Output projection
     let ao = gemv_f16_buf(w_out, &gated, HDIM, 4096, scratch_f32);
     ao_out.copy_from_slice(&ao);
+
+    if objeta_debug_enabled() && layer_idx == 0 && pos == 0 {
+        let q_norm = q_rep.iter().map(|v| v*v).sum::<f32>().sqrt();
+        let k_norm = k_rep.iter().map(|v| v*v).sum::<f32>().sqrt();
+        let s_norm = S_state.iter().map(|v| v*v).sum::<f32>().sqrt();
+        let out_norm = output.iter().map(|v| v*v).sum::<f32>().sqrt();
+        let gated_norm = gated.iter().map(|v| v*v).sum::<f32>().sqrt();
+        let ao_norm = ao.iter().map(|v| v*v).sum::<f32>().sqrt();
+        println!("[RUST DETAILED L0] normalized q norm: {:.6}", q_norm);
+        println!("[RUST DETAILED L0] normalized k norm: {:.6}", k_norm);
+        println!("[RUST DETAILED L0] S_state norm: {:.6}", s_norm);
+        println!("[RUST DETAILED L0] output norm: {:.6}", out_norm);
+        println!("[RUST DETAILED L0] gated norm: {:.6}", gated_norm);
+        println!("[RUST DETAILED L0] ao norm: {:.6}", ao_norm);
+    }
 }
 
 /// One fused layer forward call.
@@ -772,6 +829,7 @@ struct LayerWeights {
     // Small weights: f32 (negligible memory)
     w_b: Vec<f32>, w_a: Vec<f32>, w_conv: Vec<f32>, w_norm: Vec<f32>,
     dt_bias: Vec<f32>, a_log: Vec<f32>, se_gate_w: Vec<f32>,
+    q_norm: Vec<f32>, k_norm: Vec<f32>,
     input_norm: Vec<f32>, post_norm: Vec<f32>,
     is_gqa: bool, has_attn: bool,
     qkv_M: usize, qkv_K: usize, o_M: usize, o_K: usize,
@@ -779,6 +837,7 @@ struct LayerWeights {
 
 pub struct Qwen36Runner {
     embed: memmap2::Mmap,   // mmap'd embed_tokens.bin (2GB, zero-copy)
+    lm_head: Option<memmap2::Mmap>, // mmap'd lm_head.bin when embeddings are untied
     final_norm: Vec<f32>,
     layers: Vec<LayerWeights>,
     // KV caches
@@ -804,6 +863,8 @@ pub struct Qwen36Runner {
     pub fusion_ratio: f64,
     /// Skip MoE+shared expert on non-GQA (DeltaNet) layers
     pub moe_on_deltanet: bool,
+    /// Whether routed MoE is globally enabled (used for isolation debugging)
+    pub moe_enabled: bool,
     /// Scheduler: phase-aware execution policy per layer
     policy_table: [LayerPolicy; 40],
     /// Whether Metal fused GQA is available (tested at init)
@@ -830,7 +891,19 @@ impl Qwen36Runner {
         let embed_path = bin_dir.join("embed_tokens.bin");
         let embed_file = std::fs::File::open(&embed_path).ok()?;
         let embed = unsafe { memmap2::Mmap::map(&embed_file).ok()? };
-        let n_vocab = embed.len() / (HDIM * 4); // f32 = 4 bytes
+        let _n_vocab = embed.len() / (HDIM * 4); // f32 = 4 bytes
+
+        let lm_head = {
+            let path = bin_dir.join("lm_head.bin");
+            if path.exists() {
+                let file = std::fs::File::open(&path).ok()?;
+                eprintln!("[objeta] lm_head loaded from lm_head.bin");
+                Some(unsafe { memmap2::Mmap::map(&file).ok()? })
+            } else {
+                eprintln!("[objeta] lm_head.bin missing, falling back to tied embed weights");
+                None
+            }
+        };
 
         let norm_bytes = std::fs::read(bin_dir.join("final_norm.bin")).ok()?;
         let final_norm: Vec<f32> = norm_bytes.chunks_exact(4)
@@ -845,7 +918,12 @@ impl Qwen36Runner {
         // Build scheduler policy table
         let policy_table = build_policy_table(0.33, false);
 
-        // Apply strategy.json if present (family-aware precision)
+        // Apply strategy.json if present (family-aware precision).
+        // For correctness debugging, allow disabling it without changing files.
+        let disable_strategy = std::env::var("OBJETA_DISABLE_STRATEGY")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        if !disable_strategy {
         if let Some(strategy) = crate::strategy::load_strategy(bin_dir) {
             let ec = &strategy.executor_config;
             for l in 0..40 {
@@ -884,6 +962,9 @@ impl Qwen36Runner {
                 }
             }
         }
+        } else {
+            eprintln!("[objeta] strategy disabled via OBJETA_DISABLE_STRATEGY");
+        }
 
         // KV caches (only for full GQA layers, l % 4 == 3)
         let kv_size = 2 * max_seq * HEAD_DIM; // n_kv=2, hd=256
@@ -906,15 +987,9 @@ impl Qwen36Runner {
         let (rope_cos, rope_sin) = rope_cache(max_seq, HEAD_DIM);
 
         // Init Metal GQA persistent resources (RoPE tables, once)
-        let metal_gqa_ok = unsafe {
-            let r = lko_metal_gqa_init(rope_cos.as_ptr(), rope_sin.as_ptr(), max_seq as i32);
-            r == 0
-        };
-        if metal_gqa_ok {
-            eprintln!("[objeta] Metal GQA: OK");
-        } else {
-            eprintln!("[objeta] Metal GQA: unavailable, using CPU fallback");
-        }
+        let metal_gqa_ok = false;
+        let _ = unsafe { lko_metal_gqa_init(rope_cos.as_ptr(), rope_sin.as_ptr(), max_seq as i32) };
+        eprintln!("[objeta] Metal GQA: disabled pending kernel parity, using CPU fallback");
 
         // Pre-load routers + mmap MoE weights
         let mut routers = Vec::with_capacity(40);
@@ -939,7 +1014,7 @@ impl Qwen36Runner {
         unsafe { crate::moe_dispatch::lko_moe_init_freq_tracker(40); }
 
         Some(Qwen36Runner {
-            embed, final_norm, layers,
+            embed, lm_head, final_norm, layers,
             kv_k, kv_v, conv_states, conv_ptrs, S_states,
             rope_cos, rope_sin,
             routers, gu_mmaps, down_mmaps,
@@ -953,6 +1028,7 @@ impl Qwen36Runner {
             max_seq,
             fusion_ratio: 0.33,
             moe_on_deltanet: false,  // matches initial policy_table
+            moe_enabled: true,
             metal_gqa_ok, metal_gqa_first_fail: true,
             expert_cache: std::collections::HashMap::new(),
             expert_cache_order: Vec::new(),
@@ -982,6 +1058,7 @@ impl Qwen36Runner {
         let stride = (1.0 / self.fusion_ratio.max(0.01)).round() as usize;
         let mut delta_count = 0usize;
         let mut deltas_skipped = 0u32;
+        let mut n_moe_collapse = 0usize;
 
         for l in 0..40 {
             let policy = &self.policy_table[l];
@@ -989,9 +1066,11 @@ impl Qwen36Runner {
 
             // ── Norm (always, cheap) ──
             let t0 = Instant::now();
-            if !lw.input_norm.is_empty() {
-                h = rms_norm(&h, &lw.input_norm);
-            }
+            let h_norm = if !lw.input_norm.is_empty() {
+                rms_norm_offset(&h, &lw.input_norm)
+            } else {
+                h.clone()
+            };
             t_norm += t0.elapsed().as_secs_f64();
 
             // ── Attention (policy-driven) ──
@@ -1002,14 +1081,15 @@ impl Qwen36Runner {
                         let t0 = Instant::now();
                         let ao = if self.metal_gqa_ok {
                             if let Some(ao) = gqa_metal_try(
-                                &lw.w_qkv, &lw.w_o, &h,
+                                l,
+                                &lw.w_qkv, &lw.w_o, &h_norm,
                                 pos as u32, seq_len as u32, self.max_seq as u32,
                                 &mut self.kv_k[l], &mut self.kv_v[l],
                                 &mut self.metal_gqa_first_fail,
                             ) { ao } else {
                                 let mut ao = vec![0.0f32; HDIM];
                                 gqa_attention_fused(
-                                    &lw.w_qkv, &lw.w_o, &h,
+                                    &lw.w_qkv, &lw.w_o, &lw.q_norm, &lw.k_norm, &h_norm,
                                     &mut self.kv_k[l], &mut self.kv_v[l],
                                     &self.rope_cos, &self.rope_sin,
                                     16, 2, HEAD_DIM, pos, seq_len, self.max_seq,
@@ -1024,7 +1104,7 @@ impl Qwen36Runner {
                         } else {
                             let mut ao = vec![0.0f32; HDIM];
                             gqa_attention_fused(
-                                &lw.w_qkv, &lw.w_o, &h,
+                                &lw.w_qkv, &lw.w_o, &lw.q_norm, &lw.k_norm, &h_norm,
                                 &mut self.kv_k[l], &mut self.kv_v[l],
                                 &self.rope_cos, &self.rope_sin,
                                 16, 2, HEAD_DIM, pos, seq_len, self.max_seq,
@@ -1046,11 +1126,13 @@ impl Qwen36Runner {
                             &lw.w_qkv, &lw.w_z, &lw.w_b, &lw.w_a,
                             &lw.w_o, &lw.w_conv, &lw.w_norm,
                             &lw.dt_bias, &lw.a_log,
-                            &h,
+                            &h_norm,
                             &mut self.conv_states[l], &mut self.conv_ptrs[l],
                             &mut self.S_states[l],
                             &mut ao,
                             &mut self.scratch_f32,
+                            l,
+                            pos,
                         );
                         t_delta += t0.elapsed().as_secs_f64();
                         ao
@@ -1065,42 +1147,47 @@ impl Qwen36Runner {
                 }
             };
 
+            let skip_moe = false;
+
             for i in 0..HDIM { h[i] += ao[i]; }
 
             // ── Post-attention norm ──
             let t0 = Instant::now();
-            if !lw.post_norm.is_empty() {
-                h = rms_norm(&h, &lw.post_norm);
-            }
+            let h_norm2 = if !lw.post_norm.is_empty() {
+                rms_norm_offset(&h, &lw.post_norm)
+            } else {
+                h.clone()
+            };
             t_norm += t0.elapsed().as_secs_f64();
 
             // ── Shared expert (policy-driven) ──
             let t0 = Instant::now();
-            if policy.moe != MoEPolicy::Skip && !lw.se_gate.is_empty() {
-                let gate = gemv_f16(&lw.se_gate, &h, 512, HDIM);
-                let up = gemv_f16(&lw.se_up, &h, 512, HDIM);
+            if policy.moe != MoEPolicy::Skip && !skip_moe && !lw.se_gate.is_empty() {
+                let gate = gemv_f16(&lw.se_gate, &h_norm2, 512, HDIM);
+                let up = gemv_f16(&lw.se_up, &h_norm2, 512, HDIM);
                 let mut hidden = gate.clone();
                 for i in 0..512 { hidden[i] = hidden[i] / (1.0 + (-hidden[i]).exp()) * up[i]; }
                 let se_out = gemv_f16(&lw.se_down, &hidden, HDIM, 512);
-                let se_gate = 1.0 / (1.0 + (-dot_f32(&lw.se_gate_w, &h)).exp());
+                let se_gate = 1.0 / (1.0 + (-dot_f32(&lw.se_gate_w, &h_norm2)).exp());
                 for i in 0..HDIM { h[i] += se_out[i] * se_gate; }
             }
             t_shared += t0.elapsed().as_secs_f64();
 
             // ── MoE dispatch (policy-driven) ──
             let t0 = Instant::now();
-            if policy.moe != MoEPolicy::Skip {
-                let moe_out = self.call_moe(&h, l);
+            if self.moe_enabled && policy.moe != MoEPolicy::Skip && !skip_moe {
+                let moe_out = self.call_moe(&h_norm2, l);
                 for i in 0..HDIM { h[i] += moe_out[i]; }
             }
             t_moe += t0.elapsed().as_secs_f64();
         }
 
+
         let n_full: usize = self.policy_table.iter().filter(|p| p.attn == AttnPolicy::Full).count();
         let n_collapse: usize = self.policy_table.iter().filter(|p| p.attn == AttnPolicy::Collapse).count();
-        eprintln!("TIMING: delta={:.0}ms gqa={:.0}ms shared={:.0}ms moe={:.0}ms | scheduler: full={} collapse={} fusion={:.2}",
+        eprintln!("TIMING: delta={:.0}ms gqa={:.0}ms shared={:.0}ms moe={:.0}ms | scheduler: full={} collapse={} moe_collapse={} fusion={:.2}",
             t_delta*1000.0, t_gqa*1000.0, t_shared*1000.0, t_moe*1000.0,
-            n_full, n_collapse, self.fusion_ratio);
+            n_full, n_collapse, n_moe_collapse, self.fusion_ratio);
 
         (h, [t_delta, t_gqa, t_shared, t_moe, t_norm])
     }
@@ -1116,23 +1203,26 @@ impl Qwen36Runner {
             let policy = self.policy_table[l];
             let lw = &self.layers[l];
 
-            if !lw.input_norm.is_empty() {
-                h = rms_norm(&h, &lw.input_norm);
-            }
+            let h_norm = if !lw.input_norm.is_empty() {
+                rms_norm_offset(&h, &lw.input_norm)
+            } else {
+                h.clone()
+            };
 
             let ao = match policy.attn {
                 AttnPolicy::Full => {
                     if policy.is_steering {
                         if self.metal_gqa_ok {
                             if let Some(ao) = gqa_metal_try(
-                                &lw.w_qkv, &lw.w_o, &h,
+                                l,
+                                &lw.w_qkv, &lw.w_o, &h_norm,
                                 pos as u32, seq_len as u32, self.max_seq as u32,
                                 &mut self.kv_k[l], &mut self.kv_v[l],
                                 &mut self.metal_gqa_first_fail,
                             ) { ao } else {
                                 let mut ao = vec![0.0f32; HDIM];
                                 gqa_attention_fused(
-                                    &lw.w_qkv, &lw.w_o, &h,
+                                    &lw.w_qkv, &lw.w_o, &lw.q_norm, &lw.k_norm, &h_norm,
                                     &mut self.kv_k[l], &mut self.kv_v[l],
                                     &self.rope_cos, &self.rope_sin,
                                     16, 2, HEAD_DIM, pos, seq_len, self.max_seq,
@@ -1147,7 +1237,7 @@ impl Qwen36Runner {
                         } else {
                             let mut ao = vec![0.0f32; HDIM];
                             gqa_attention_fused(
-                                &lw.w_qkv, &lw.w_o, &h,
+                                &lw.w_qkv, &lw.w_o, &lw.q_norm, &lw.k_norm, &h_norm,
                                 &mut self.kv_k[l], &mut self.kv_v[l],
                                 &self.rope_cos, &self.rope_sin,
                                 16, 2, HEAD_DIM, pos, seq_len, self.max_seq,
@@ -1165,11 +1255,13 @@ impl Qwen36Runner {
                             &lw.w_qkv, &lw.w_z, &lw.w_b, &lw.w_a,
                             &lw.w_o, &lw.w_conv, &lw.w_norm,
                             &lw.dt_bias, &lw.a_log,
-                            &h,
+                            &h_norm,
                             &mut self.conv_states[l], &mut self.conv_ptrs[l],
                             &mut self.S_states[l],
                             &mut ao,
                             &mut self.scratch_f32,
+                            l,
+                            pos,
                         );
                         ao
                     }
@@ -1181,22 +1273,24 @@ impl Qwen36Runner {
 
             for i in 0..HDIM { h[i] += ao[i]; }
 
-            if !lw.post_norm.is_empty() {
-                h = rms_norm(&h, &lw.post_norm);
-            }
+            let h_norm2 = if !lw.post_norm.is_empty() {
+                rms_norm_offset(&h, &lw.post_norm)
+            } else {
+                h.clone()
+            };
 
             if policy.moe != MoEPolicy::Skip && !lw.se_gate.is_empty() {
-                let gate = gemv_f16(&lw.se_gate, &h, 512, HDIM);
-                let up = gemv_f16(&lw.se_up, &h, 512, HDIM);
+                let gate = gemv_f16(&lw.se_gate, &h_norm2, 512, HDIM);
+                let up = gemv_f16(&lw.se_up, &h_norm2, 512, HDIM);
                 let mut hidden = gate.clone();
                 for i in 0..512 { hidden[i] = hidden[i] / (1.0 + (-hidden[i]).exp()) * up[i]; }
                 let se_out = gemv_f16(&lw.se_down, &hidden, HDIM, 512);
-                let se_gate = 1.0 / (1.0 + (-dot_f32(&lw.se_gate_w, &h)).exp());
+                let se_gate = 1.0 / (1.0 + (-dot_f32(&lw.se_gate_w, &h_norm2)).exp());
                 for i in 0..HDIM { h[i] += se_out[i] * se_gate; }
             }
 
-            if policy.moe != MoEPolicy::Skip {
-                let moe_out = self.call_moe(&h, l);
+            if self.moe_enabled && policy.moe != MoEPolicy::Skip {
+                let moe_out = self.call_moe(&h_norm2, l);
                 for i in 0..HDIM { h[i] += moe_out[i]; }
             }
         }
@@ -1205,10 +1299,8 @@ impl Qwen36Runner {
     }
 
     fn call_moe(&mut self, h: &[f32], l: usize) -> Vec<f32> {
-        // Adaptive top-k
-        let (eidx, ew, _n_selected) = crate::moe_dispatch::router_topk_adaptive(
-            &self.routers[l], h, 8,
-        );
+        // Exact HF routing: always top-8 experts with renormalized softmax weights.
+        let (eidx, ew) = crate::moe_dispatch::router_topk_cpu(&self.routers[l], h, 8);
 
         let mut out = vec![0.0f32; HDIM];
 
@@ -1434,12 +1526,14 @@ fn load_layer_weights(bin_dir: &Path, l: usize) -> Option<LayerWeights> {
     let se_up = get_f16("mlp.shared_expert.up_proj.weight").unwrap_or_default();
     let se_down = get_f16("mlp.shared_expert.down_proj.weight").unwrap_or_default();
     let se_gate_w = get_f32("mlp.shared_expert_gate.weight").unwrap_or_default();
+    let q_norm = get_f32("self_attn.q_norm.weight").unwrap_or_default();
+    let k_norm = get_f32("self_attn.k_norm.weight").unwrap_or_default();
     let input_norm = get_f32("input_layernorm.weight").unwrap_or_default();
     let post_norm = get_f32("post_attention_layernorm.weight").unwrap_or_default();
 
     Some(LayerWeights {
         w_qkv, w_o, w_z, w_b, w_a, w_conv, w_norm, dt_bias, a_log,
-        se_gate, se_up, se_down, se_gate_w,
+        se_gate, se_up, se_down, se_gate_w, q_norm, k_norm,
         input_norm, post_norm,
         is_gqa, has_attn, qkv_M, qkv_K, o_M, o_K,
     })
@@ -1451,14 +1545,15 @@ impl Qwen36Runner {
     /// Compute logits = embed @ hn, return top-k indices + values.
     /// Uses NEON+rayon for the massive matmul (248320 × 2048 = 509M FLOPs).
     pub fn lm_head_topk(&self, hn: &[f32], top_k: usize) -> (Vec<i32>, Vec<f32>) {
-        let vocab = self.embed.len() / (HDIM * 4); // f32 = 4 bytes
+        let lm_head_mmap = self.lm_head.as_ref().unwrap_or(&self.embed);
+        let vocab = lm_head_mmap.len() / (HDIM * 4); // f32 = 4 bytes
 
         // Compute logits in parallel (embed is mmap'd, access via raw pointer is safe for read-only)
-        let embed_data: &[f32] = unsafe {
-            std::slice::from_raw_parts(self.embed.as_ptr() as *const f32, vocab * HDIM)
+        let lm_head_data: &[f32] = unsafe {
+            std::slice::from_raw_parts(lm_head_mmap.as_ptr() as *const f32, vocab * HDIM)
         };
         let logits: Vec<f32> = (0..vocab).into_par_iter().map(|v| {
-            dot_f32(&embed_data[v * HDIM..(v + 1) * HDIM], hn)
+            dot_f32(&lm_head_data[v * HDIM..(v + 1) * HDIM], hn)
         }).collect();
 
         // Top-k selection (partial sort)
@@ -1471,11 +1566,57 @@ impl Qwen36Runner {
         let values: Vec<f32> = indexed.iter().map(|(_, v)| *v).collect();
         (indices, values)
     }
+
+    /// Compute logits = embed @ hn, return top-k indices + values + logit entropy.
+    /// Shannon entropy is computed on the full vocab distribution in a single pass.
+    pub fn lm_head_topk_with_entropy(&self, hn: &[f32], top_k: usize) -> (Vec<i32>, Vec<f32>, f32) {
+        let lm_head_mmap = self.lm_head.as_ref().unwrap_or(&self.embed);
+        let vocab = lm_head_mmap.len() / (HDIM * 4); // f32 = 4 bytes
+
+        let lm_head_data: &[f32] = unsafe {
+            std::slice::from_raw_parts(lm_head_mmap.as_ptr() as *const f32, vocab * HDIM)
+        };
+        let logits: Vec<f32> = (0..vocab).into_par_iter().map(|v| {
+            dot_f32(&lm_head_data[v * HDIM..(v + 1) * HDIM], hn)
+        }).collect();
+
+        // Calculate max logit
+        let max_logit = logits.par_iter().cloned().reduce(|| f32::NEG_INFINITY, f32::max);
+
+        // Sum exponent and calculate entropy
+        let (sum_exp, sum_exp_log_exp) = logits.par_iter().map(|&x| {
+            let e = (x - max_logit).exp();
+            (e, e * (x - max_logit))
+        }).reduce(|| (0.0f32, 0.0f32), |a, b| (a.0 + b.0, a.1 + b.1));
+
+        let entropy = if sum_exp > 1e-10 {
+            sum_exp.ln() - (sum_exp_log_exp / sum_exp)
+        } else {
+            0.0f32
+        };
+
+        // Top-k selection (partial sort)
+        let mut indexed: Vec<(usize, f32)> = logits.into_iter().enumerate().collect();
+        let k = top_k.min(indexed.len());
+        indexed.select_nth_unstable_by(k, |a, b| b.1.partial_cmp(&a.1).unwrap());
+        indexed.truncate(k);
+
+        let indices: Vec<i32> = indexed.iter().map(|(i, _)| *i as i32).collect();
+        let values: Vec<f32> = indexed.iter().map(|(_, v)| *v).collect();
+        (indices, values, entropy)
+    }
 }
 
 // ── C API for full executor ──────────────────────────────────────────────
 
 static mut RUNNER: Option<Qwen36Runner> = None;
+
+#[inline]
+fn objeta_debug_enabled() -> bool {
+    std::env::var("OBJETA_DEBUG")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
 
 #[no_mangle]
 pub extern "C" fn lko_runner_init(bin_dir: *const i8, max_seq: i32) -> i32 {
@@ -1561,22 +1702,25 @@ pub extern "C" fn lko_runner_forward_n(
     for l in 0..n {
         let policy = runner.policy_table[l];
         let lw = &runner.layers[l];
-        if !lw.input_norm.is_empty() {
-            h = rms_norm(&h, &lw.input_norm);
-        }
+        let h_norm = if !lw.input_norm.is_empty() {
+            rms_norm_offset(&h, &lw.input_norm)
+        } else {
+            h.clone()
+        };
         let ao = match policy.attn {
             AttnPolicy::Full => {
                 if policy.is_steering {
                     if runner.metal_gqa_ok {
                         if let Some(ao) = gqa_metal_try(
-                            &lw.w_qkv, &lw.w_o, &h,
+                            l,
+                            &lw.w_qkv, &lw.w_o, &h_norm,
                             pos as u32, seq_len as u32, runner.max_seq as u32,
                             &mut runner.kv_k[l], &mut runner.kv_v[l],
                             &mut runner.metal_gqa_first_fail,
                         ) { ao } else {
                             let mut ao = vec![0.0f32; HDIM];
                             gqa_attention_fused(
-                                &lw.w_qkv, &lw.w_o, &h,
+                                &lw.w_qkv, &lw.w_o, &lw.q_norm, &lw.k_norm, &h_norm,
                                 &mut runner.kv_k[l], &mut runner.kv_v[l],
                                 &runner.rope_cos, &runner.rope_sin,
                                 16, 2, HEAD_DIM, pos as usize, seq_len as usize, runner.max_seq,
@@ -1590,7 +1734,7 @@ pub extern "C" fn lko_runner_forward_n(
                     } else {
                         let mut ao = vec![0.0f32; HDIM];
                         gqa_attention_fused(
-                            &lw.w_qkv, &lw.w_o, &h,
+                            &lw.w_qkv, &lw.w_o, &lw.q_norm, &lw.k_norm, &h_norm,
                             &mut runner.kv_k[l], &mut runner.kv_v[l],
                             &runner.rope_cos, &runner.rope_sin,
                             16, 2, HEAD_DIM, pos as usize, seq_len as usize, runner.max_seq,
@@ -1607,11 +1751,13 @@ pub extern "C" fn lko_runner_forward_n(
                         &lw.w_qkv, &lw.w_z, &lw.w_b, &lw.w_a,
                         &lw.w_o, &lw.w_conv, &lw.w_norm,
                         &lw.dt_bias, &lw.a_log,
-                        &h,
+                        &h_norm,
                         &mut runner.conv_states[l], &mut runner.conv_ptrs[l],
                         &mut runner.S_states[l],
                         &mut ao,
                         &mut runner.scratch_f32,
+                        l,
+                        pos as usize,
                     );
                     ao
                 }
@@ -1619,20 +1765,22 @@ pub extern "C" fn lko_runner_forward_n(
             AttnPolicy::Collapse | AttnPolicy::Skip => { vec![0.0f32; HDIM] }
         };
         for i in 0..HDIM { h[i] += ao[i]; }
-        if !lw.post_norm.is_empty() {
-            h = rms_norm(&h, &lw.post_norm);
-        }
+        let h_norm2 = if !lw.post_norm.is_empty() {
+            rms_norm_offset(&h, &lw.post_norm)
+        } else {
+            h.clone()
+        };
         if policy.moe != MoEPolicy::Skip && !lw.se_gate.is_empty() {
-            let gate = gemv_f16(&lw.se_gate, &h, 512, HDIM);
-            let up = gemv_f16(&lw.se_up, &h, 512, HDIM);
+            let gate = gemv_f16(&lw.se_gate, &h_norm2, 512, HDIM);
+            let up = gemv_f16(&lw.se_up, &h_norm2, 512, HDIM);
             let mut hidden = gate.clone();
             for i in 0..512 { hidden[i] = hidden[i] / (1.0 + (-hidden[i]).exp()) * up[i]; }
             let se_out = gemv_f16(&lw.se_down, &hidden, HDIM, 512);
-            let se_gate = 1.0 / (1.0 + (-dot_f32(&lw.se_gate_w, &h)).exp());
+            let se_gate = 1.0 / (1.0 + (-dot_f32(&lw.se_gate_w, &h_norm2)).exp());
             for i in 0..HDIM { h[i] += se_out[i] * se_gate; }
         }
-        if policy.moe != MoEPolicy::Skip {
-            let moe_out = runner.call_moe(&h, l);
+        if runner.moe_enabled && policy.moe != MoEPolicy::Skip {
+            let moe_out = runner.call_moe(&h_norm2, l);
             for i in 0..HDIM { h[i] += moe_out[i]; }
         }
     }
@@ -1685,7 +1833,7 @@ pub extern "C" fn lko_runner_step(
     values_out: *mut f32,
 ) -> i32 {
     let runner = unsafe { RUNNER.as_mut() }.expect("runner not initialized");
-    let (h, timing) = runner.forward_timed(token_id as usize, pos as usize, seq_len as usize);
+    let (h, _timing) = runner.forward_timed(token_id as usize, pos as usize, seq_len as usize);
 
     // RMSNorm
     let hn = rms_norm(&h, &runner.final_norm);
@@ -1699,4 +1847,298 @@ pub extern "C" fn lko_runner_step(
         std::ptr::copy_nonoverlapping(values.as_ptr(), values_out, k);
     }
     k as i32
+}
+
+/// Full generation step: forward(hidden) + RMSNorm + lm_head + entropy.
+#[no_mangle]
+pub extern "C" fn lko_runner_step_with_entropy(
+    token_id: i32, pos: i32, seq_len: i32,
+    hn_out: *mut f32,
+    top_k: i32,
+    indices_out: *mut i32,
+    values_out: *mut f32,
+    entropy_out: *mut f32,
+) -> i32 {
+    let runner = unsafe { RUNNER.as_mut() }.expect("runner not initialized");
+    let (h, _timing) = runner.forward_timed(token_id as usize, pos as usize, seq_len as usize);
+
+    // RMSNorm
+    let hn = rms_norm(&h, &runner.final_norm);
+    unsafe { std::ptr::copy_nonoverlapping(hn.as_ptr(), hn_out, HDIM); }
+
+    // lm_head top-k with entropy
+    let (indices, values, entropy) = runner.lm_head_topk_with_entropy(&hn, top_k as usize);
+    let k = indices.len().min(top_k as usize);
+    unsafe {
+        std::ptr::copy_nonoverlapping(indices.as_ptr(), indices_out, k);
+        std::ptr::copy_nonoverlapping(values.as_ptr(), values_out, k);
+        *entropy_out = entropy;
+    }
+    k as i32
+}
+
+/// Set MoE enabled state globally for isolation testing/debugging.
+#[no_mangle]
+pub extern "C" fn lko_runner_set_moe_enabled(enabled: i32) -> i32 {
+    unsafe {
+        match &mut RUNNER {
+            Some(r) => {
+                r.moe_enabled = enabled != 0;
+                1
+            }
+            None => 0,
+        }
+    }
+}
+
+/// Forward pass through only the first N layers, tracing intermediate layer hidden states.
+/// `h_trace_out`: output buffer of size `n_layers * HDIM` floats.
+#[no_mangle]
+pub extern "C" fn lko_runner_trace_layers(
+    token_id: i32, pos: i32, seq_len: i32, n_layers: i32,
+    h_trace_out: *mut f32,
+) -> i32 {
+    let runner = unsafe { RUNNER.as_mut() }.expect("runner not initialized");
+    let mut h = {
+        let ptr = unsafe { runner.embed.as_ptr().add(token_id as usize * HDIM * 4) as *const f32 };
+        (0..HDIM).map(|i| unsafe { *ptr.add(i) }).collect::<Vec<f32>>()
+    };
+    let n = n_layers.min(40) as usize;
+    for l in 0..n {
+        let policy = runner.policy_table[l];
+        let lw = &runner.layers[l];
+        let h_norm = if !lw.input_norm.is_empty() {
+            rms_norm_offset(&h, &lw.input_norm)
+        } else {
+            h.clone()
+        };
+        if objeta_debug_enabled() && l == 0 && pos == 0 {
+            let h_orig_norm = h.iter().map(|v| v*v).sum::<f32>().sqrt();
+            let h_norm_norm = h_norm.iter().map(|v| v*v).sum::<f32>().sqrt();
+            println!("[RUST DEBUG L0] h_orig norm: {:.6}, first 5: {:?}", h_orig_norm, &h[..5]);
+            println!("[RUST DEBUG L0] h_norm norm: {:.6}, first 5: {:?}", h_norm_norm, &h_norm[..5]);
+        }
+        let ao = match policy.attn {
+            AttnPolicy::Full => {
+                if policy.is_steering {
+                    if runner.metal_gqa_ok {
+                        if let Some(ao) = gqa_metal_try(
+                            l,
+                            &lw.w_qkv, &lw.w_o, &h_norm,
+                            pos as u32, seq_len as u32, runner.max_seq as u32,
+                            &mut runner.kv_k[l], &mut runner.kv_v[l],
+                            &mut runner.metal_gqa_first_fail,
+                        ) { ao } else {
+                            let mut ao = vec![0.0f32; HDIM];
+                            gqa_attention_fused(
+                                &lw.w_qkv, &lw.w_o, &lw.q_norm, &lw.k_norm, &h_norm,
+                                &mut runner.kv_k[l], &mut runner.kv_v[l],
+                                &runner.rope_cos, &runner.rope_sin,
+                                16, 2, HEAD_DIM, pos as usize, seq_len as usize, runner.max_seq,
+                                &mut ao, &mut runner.scratch_qkv, &mut runner.scratch_q,
+                                &mut runner.scratch_k, &mut runner.scratch_v,
+                                &mut runner.scratch_attn_out,
+                                &mut runner.scratch_scores, &mut runner.scratch_attn,
+                            );
+                            ao
+                        }
+                    } else {
+                        let mut ao = vec![0.0f32; HDIM];
+                        gqa_attention_fused(
+                            &lw.w_qkv, &lw.w_o, &lw.q_norm, &lw.k_norm, &h_norm,
+                            &mut runner.kv_k[l], &mut runner.kv_v[l],
+                            &runner.rope_cos, &runner.rope_sin,
+                            16, 2, HEAD_DIM, pos as usize, seq_len as usize, runner.max_seq,
+                            &mut ao, &mut runner.scratch_qkv, &mut runner.scratch_q,
+                            &mut runner.scratch_k, &mut runner.scratch_v,
+                            &mut runner.scratch_attn_out,
+                            &mut runner.scratch_scores, &mut runner.scratch_attn,
+                        );
+                        ao
+                    }
+                } else {
+                    let mut ao = vec![0.0f32; HDIM];
+                    delta_net_fused(
+                        &lw.w_qkv, &lw.w_z, &lw.w_b, &lw.w_a,
+                        &lw.w_o, &lw.w_conv, &lw.w_norm,
+                        &lw.dt_bias, &lw.a_log,
+                        &h_norm,
+                        &mut runner.conv_states[l], &mut runner.conv_ptrs[l],
+                        &mut runner.S_states[l],
+                        &mut ao,
+                        &mut runner.scratch_f32,
+                        l,
+                        pos as usize,
+                    );
+                    ao
+                }
+            }
+            AttnPolicy::Collapse | AttnPolicy::Skip => { vec![0.0f32; HDIM] }
+        };
+        for i in 0..HDIM { h[i] += ao[i]; }
+        let h_norm2 = if !lw.post_norm.is_empty() {
+            rms_norm_offset(&h, &lw.post_norm)
+        } else {
+            h.clone()
+        };
+        if policy.moe != MoEPolicy::Skip && !lw.se_gate.is_empty() {
+            let gate = gemv_f16(&lw.se_gate, &h_norm2, 512, HDIM);
+            let up = gemv_f16(&lw.se_up, &h_norm2, 512, HDIM);
+            let mut hidden = gate.clone();
+            for i in 0..512 { hidden[i] = hidden[i] / (1.0 + (-hidden[i]).exp()) * up[i]; }
+            let se_out = gemv_f16(&lw.se_down, &hidden, HDIM, 512);
+            let se_gate = 1.0 / (1.0 + (-dot_f32(&lw.se_gate_w, &h_norm2)).exp());
+            for i in 0..HDIM { h[i] += se_out[i] * se_gate; }
+        }
+        if runner.moe_enabled && policy.moe != MoEPolicy::Skip {
+            let moe_out = runner.call_moe(&h_norm2, l);
+            for i in 0..HDIM { h[i] += moe_out[i]; }
+        }
+        // Copy layer intermediate hidden state to output buffer
+        unsafe {
+            std::ptr::copy_nonoverlapping(h.as_ptr(), h_trace_out.add(l * HDIM), HDIM);
+        }
+    }
+    HDIM as i32
+}
+
+/// Trace one layer's internal components for a single token.
+/// Copies, when non-null:
+/// - `h_after_attn_out`: residual stream after attention add
+/// - `h_norm2_out`: post-attention normalized input to MLP/MoE
+/// - `shared_out`: shared expert contribution after shared gate
+/// - `moe_out`: routed MoE contribution
+/// - `h_after_mlp_out`: residual stream after MLP/MoE add
+#[no_mangle]
+pub extern "C" fn lko_runner_trace_layer_components(
+    token_id: i32, pos: i32, seq_len: i32, target_layer: i32,
+    h_after_attn_out: *mut f32,
+    h_norm2_out: *mut f32,
+    shared_out: *mut f32,
+    moe_out: *mut f32,
+    h_after_mlp_out: *mut f32,
+) -> i32 {
+    let runner = unsafe { RUNNER.as_mut() }.expect("runner not initialized");
+    let mut h = {
+        let ptr = unsafe { runner.embed.as_ptr().add(token_id as usize * HDIM * 4) as *const f32 };
+        (0..HDIM).map(|i| unsafe { *ptr.add(i) }).collect::<Vec<f32>>()
+    };
+    let target = target_layer.clamp(0, 39) as usize;
+
+    for l in 0..=target {
+        let policy = runner.policy_table[l];
+        let lw = &runner.layers[l];
+        let h_norm = if !lw.input_norm.is_empty() {
+            rms_norm_offset(&h, &lw.input_norm)
+        } else {
+            h.clone()
+        };
+        let ao = match policy.attn {
+            AttnPolicy::Full => {
+                if policy.is_steering {
+                    if runner.metal_gqa_ok {
+                        if let Some(ao) = gqa_metal_try(
+                            l,
+                            &lw.w_qkv, &lw.w_o, &h_norm,
+                            pos as u32, seq_len as u32, runner.max_seq as u32,
+                            &mut runner.kv_k[l], &mut runner.kv_v[l],
+                            &mut runner.metal_gqa_first_fail,
+                        ) { ao } else {
+                            let mut ao = vec![0.0f32; HDIM];
+                            gqa_attention_fused(
+                                &lw.w_qkv, &lw.w_o, &lw.q_norm, &lw.k_norm, &h_norm,
+                                &mut runner.kv_k[l], &mut runner.kv_v[l],
+                                &runner.rope_cos, &runner.rope_sin,
+                                16, 2, HEAD_DIM, pos as usize, seq_len as usize, runner.max_seq,
+                                &mut ao, &mut runner.scratch_qkv, &mut runner.scratch_q,
+                                &mut runner.scratch_k, &mut runner.scratch_v,
+                                &mut runner.scratch_attn_out,
+                                &mut runner.scratch_scores, &mut runner.scratch_attn,
+                            );
+                            ao
+                        }
+                    } else {
+                        let mut ao = vec![0.0f32; HDIM];
+                        gqa_attention_fused(
+                            &lw.w_qkv, &lw.w_o, &lw.q_norm, &lw.k_norm, &h_norm,
+                            &mut runner.kv_k[l], &mut runner.kv_v[l],
+                            &runner.rope_cos, &runner.rope_sin,
+                            16, 2, HEAD_DIM, pos as usize, seq_len as usize, runner.max_seq,
+                            &mut ao, &mut runner.scratch_qkv, &mut runner.scratch_q,
+                            &mut runner.scratch_k, &mut runner.scratch_v,
+                            &mut runner.scratch_attn_out,
+                            &mut runner.scratch_scores, &mut runner.scratch_attn,
+                        );
+                        ao
+                    }
+                } else {
+                    let mut ao = vec![0.0f32; HDIM];
+                    delta_net_fused(
+                        &lw.w_qkv, &lw.w_z, &lw.w_b, &lw.w_a,
+                        &lw.w_o, &lw.w_conv, &lw.w_norm,
+                        &lw.dt_bias, &lw.a_log,
+                        &h_norm,
+                        &mut runner.conv_states[l], &mut runner.conv_ptrs[l],
+                        &mut runner.S_states[l],
+                        &mut ao,
+                        &mut runner.scratch_f32,
+                        l,
+                        pos as usize,
+                    );
+                    ao
+                }
+            }
+            AttnPolicy::Collapse | AttnPolicy::Skip => vec![0.0f32; HDIM],
+        };
+        for i in 0..HDIM { h[i] += ao[i]; }
+
+        let h_after_attn = h.clone();
+        let h_norm2 = if !lw.post_norm.is_empty() {
+            rms_norm_offset(&h, &lw.post_norm)
+        } else {
+            h.clone()
+        };
+
+        let mut shared = vec![0.0f32; HDIM];
+        if policy.moe != MoEPolicy::Skip && !lw.se_gate.is_empty() {
+            let gate = gemv_f16(&lw.se_gate, &h_norm2, 512, HDIM);
+            let up = gemv_f16(&lw.se_up, &h_norm2, 512, HDIM);
+            let mut hidden = gate.clone();
+            for i in 0..512 { hidden[i] = hidden[i] / (1.0 + (-hidden[i]).exp()) * up[i]; }
+            let se_out = gemv_f16(&lw.se_down, &hidden, HDIM, 512);
+            let se_gate = 1.0 / (1.0 + (-dot_f32(&lw.se_gate_w, &h_norm2)).exp());
+            for i in 0..HDIM { shared[i] = se_out[i] * se_gate; }
+        }
+
+        let moe = if runner.moe_enabled && policy.moe != MoEPolicy::Skip {
+            runner.call_moe(&h_norm2, l)
+        } else {
+            vec![0.0f32; HDIM]
+        };
+
+        for i in 0..HDIM { h[i] += shared[i] + moe[i]; }
+
+        if l == target {
+            unsafe {
+                if !h_after_attn_out.is_null() {
+                    std::ptr::copy_nonoverlapping(h_after_attn.as_ptr(), h_after_attn_out, HDIM);
+                }
+                if !h_norm2_out.is_null() {
+                    std::ptr::copy_nonoverlapping(h_norm2.as_ptr(), h_norm2_out, HDIM);
+                }
+                if !shared_out.is_null() {
+                    std::ptr::copy_nonoverlapping(shared.as_ptr(), shared_out, HDIM);
+                }
+                if !moe_out.is_null() {
+                    std::ptr::copy_nonoverlapping(moe.as_ptr(), moe_out, HDIM);
+                }
+                if !h_after_mlp_out.is_null() {
+                    std::ptr::copy_nonoverlapping(h.as_ptr(), h_after_mlp_out, HDIM);
+                }
+            }
+            return HDIM as i32;
+        }
+    }
+
+    -1
 }

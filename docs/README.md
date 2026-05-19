@@ -4,6 +4,7 @@
 
 | Document | Description |
 |----------|-------------|
+| **CURRENT_STATUS_2026_05_18.md** | ★ Latest executor status — untied `lm_head` bug fixed, generation improved, parity still incomplete |
 | **STATUS_v1.0.md** | ★ Definitive reference — architecture, results, KPIs, file map |
 
 ## Theory (foundational)

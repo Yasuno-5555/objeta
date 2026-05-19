@@ -7,6 +7,7 @@ Output per layer:
   layer_{l}_router.bin   — f32 [256, 2048]
   layer_{l}_attn.npz     — attention/norm/shared weights (SHORT keys, no prefix)
   embed_tokens.bin       — f32 [248320, 2048]
+  lm_head.bin            — f32 [248320, 2048]
   final_norm.bin         — f32 [2048]
 """
 
@@ -23,6 +24,7 @@ layer_attn = {l: {} for l in range(40)}  # layer → {short_key: array}
 layer_router = {}  # layer → router array (takes first occurrence)
 
 embedding = None
+lm_head = None
 final_norm = None
 
 for shard_path in sorted(SRC.glob("*.npz")):
@@ -64,6 +66,9 @@ for shard_path in sorted(SRC.glob("*.npz")):
         # ── Embedding / final norm ──
         if 'embed_tokens' in key:
             embedding = npz[key]
+            continue
+        if key == 'lm_head.weight':
+            lm_head = npz[key]
             continue
         if key == 'model.language_model.norm.weight':
             final_norm = npz[key]
@@ -112,6 +117,8 @@ for l in range(40):
 
 if embedding is not None:
     embedding.astype(np.float32).tofile(DST / "embed_tokens.bin")
+if lm_head is not None:
+    lm_head.astype(np.float32).tofile(DST / "lm_head.bin")
 if final_norm is not None:
     final_norm.astype(np.float32).tofile(DST / "final_norm.bin")
 

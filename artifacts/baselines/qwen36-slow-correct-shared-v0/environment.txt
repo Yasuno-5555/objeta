@@ -1,0 +1,7 @@
+date_utc=2026-05-19T06:57:09Z
+date_local=2026-05-19T15:57:09+0900
+pwd=/Users/yasuno/projects/objeta
+python=Python 3.13.11
+cargo=cargo 1.93.0 (083ac5135 2025-12-15)
+rustc=rustc 1.93.0 (254b59607 2026-01-19)
+uname=Darwin YasunoMac-mini.local 25.4.0 Darwin Kernel Version 25.4.0: Thu Mar 19 19:32:36 PDT 2026; root:xnu-12377.101.15~1/RELEASE_ARM64_T8103 arm64

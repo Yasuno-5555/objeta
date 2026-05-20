@@ -124,6 +124,110 @@ fn q4k_gemv(q4_data: &[u8], M: usize, K: usize, x: &[f32]) -> Vec<f32> {
     result
 }
 
+/// Dequantize Q4_K_APPL row data on the fly and compute dot product with x directly.
+/// This avoids intermediate dequantization buffers or heap allocations.
+#[inline(always)]
+fn q4k_dot_row(q4_row: &[u8], K: usize, x: &[f32]) -> f32 {
+    let mut dequant_buf = [0.0f32; 2048];
+    let num_blocks = K / QK_K;
+
+    for b in 0..num_blocks {
+        let blk_start = b * Q4K_BLOCK_BYTES;
+        let blk: &[u8; Q4K_BLOCK_BYTES] = &q4_row[blk_start..blk_start + Q4K_BLOCK_BYTES]
+            .try_into().unwrap();
+
+        // Read scales and mins
+        let mut scales = [0.0f32; N_SUB];
+        let mut mins = [0.0f32; N_SUB];
+        for j in 0..N_SUB {
+            let sr = u16::from_le_bytes([blk[j * 2], blk[j * 2 + 1]]);
+            let mr = u16::from_le_bytes([blk[16 + j * 2], blk[16 + j * 2 + 1]]);
+            scales[j] = f16_to_f32(sr);
+            mins[j] = f16_to_f32(mr);
+        }
+
+        // Unpack 4-bit quants
+        let mut L = [0u8; QK_K];
+        for g in 0..4 {
+            for l in 0..32 {
+                let byte = blk[32 + g * 32 + l];
+                L[g * 64 + l] = byte & 0xF;
+                L[g * 64 + 32 + l] = byte >> 4;
+            }
+        }
+
+        // Dequantize to stack buffer
+        let out_start = b * QK_K;
+        for j in 0..N_SUB {
+            let s = scales[j];
+            let m = mins[j];
+            let sub_offset = j * SUB_SIZE;
+            for i in 0..SUB_SIZE {
+                dequant_buf[out_start + sub_offset + i] = L[sub_offset + i] as f32 * s + m;
+            }
+        }
+    }
+
+    crate::qwen36_forward::dot_f32(&dequant_buf[..K], x)
+}
+
+/// Fused MoE q4 selected expert forward for one layer.
+/// Avoids intermediate allocation of size 2048 x N floats.
+pub fn fused_moe_q4_selected_v0(
+    gate_up_q4: &[u8],
+    down_q4: &[u8],
+    x: &[f32],
+    selected_experts: &[usize],
+    routing_weights: &[f32],
+) -> Vec<f32> {
+    let n = selected_experts.len();
+    if n == 0 {
+        return vec![0.0f32; HIDDEN_DIM];
+    }
+
+    // 1. Parallel SwiGLU projection for each selected expert
+    //    Produces an intermediate hidden vector of size FFN_DIM (512) per expert.
+    let hiddens: Vec<Vec<f32>> = selected_experts
+        .par_iter()
+        .map(|&eid| {
+            let gu_start = eid * GU_EXPERT_BYTES;
+            let gu_slice = &gate_up_q4[gu_start..gu_start + GU_EXPERT_BYTES];
+            let mut hid = vec![0.0f32; FFN_DIM];
+            for i in 0..FFN_DIM {
+                let gate_row = &gu_slice[i * GU_ROW_BYTES..(i + 1) * GU_ROW_BYTES];
+                let up_row = &gu_slice[(FFN_DIM + i) * GU_ROW_BYTES..(FFN_DIM + i + 1) * GU_ROW_BYTES];
+                let g = q4k_dot_row(gate_row, GU_K, x);
+                let u = q4k_dot_row(up_row, GU_K, x);
+                hid[i] = silu(g) * u;
+            }
+            hid
+        })
+        .collect();
+
+    // 2. Parallel Down projection across all output rows
+    //    Directly accumulate weighted contribution of all selected experts.
+    let output: Vec<f32> = (0..HIDDEN_DIM)
+        .into_par_iter()
+        .map(|r| {
+            let mut val = 0.0f32;
+            for e in 0..n {
+                let eid = selected_experts[e];
+                let rw = routing_weights[e];
+
+                let d_start = eid * D_EXPERT_BYTES;
+                let down_slice = &down_q4[d_start..d_start + D_EXPERT_BYTES];
+                let down_row = &down_slice[r * D_ROW_BYTES..(r + 1) * D_ROW_BYTES];
+
+                let dot = q4k_dot_row(down_row, D_K, &hiddens[e]);
+                val += dot * rw;
+            }
+            val
+        })
+        .collect();
+
+    output
+}
+
 
 // ── Tests ──────────────────────────────────────────────────────────
 

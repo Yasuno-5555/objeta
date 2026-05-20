@@ -1455,3 +1455,52 @@ pub extern "C" fn lko_runner_selected_expert_q4(
     }
     n_selected as i32
 }
+
+#[no_mangle]
+pub extern "C" fn lko_runner_set_use_fused_moe(enabled: i32) -> i32 {
+    unsafe {
+        match &mut RUNNER {
+            Some(r) => {
+                r.use_fused_moe = enabled != 0;
+                1
+            }
+            None => 0,
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn lko_runner_selected_expert_q4_fused(
+    layer_idx: i32,
+    x: *const f32,
+    expert_ids: *const i32,
+    routing_weights: *const f32,
+    n_selected: i32,
+    routed_sum_out: *mut f32,
+) -> i32 {
+    if x.is_null() || expert_ids.is_null() || routing_weights.is_null() || routed_sum_out.is_null() {
+        return -1;
+    }
+    let runner = unsafe { RUNNER.as_mut() }.expect("runner not initialized");
+    let l = layer_idx.clamp(0, 39) as usize;
+    let n_selected = n_selected.max(0) as usize;
+    let x_slice = unsafe { std::slice::from_raw_parts(x, HDIM) };
+    let expert_ids_slice = unsafe { std::slice::from_raw_parts(expert_ids, n_selected) };
+    let routing_weights_slice = unsafe { std::slice::from_raw_parts(routing_weights, n_selected) };
+
+    let eidx: Vec<usize> = expert_ids_slice.iter().map(|&id| id as usize).collect();
+
+    let out = crate::moe_dispatch::fused_moe_q4_selected_v0(
+        &runner.gu_mmaps[l],
+        &runner.down_mmaps[l],
+        x_slice,
+        &eidx,
+        routing_weights_slice,
+    );
+
+    unsafe {
+        std::ptr::copy_nonoverlapping(out.as_ptr(), routed_sum_out, HDIM);
+    }
+    n_selected as i32
+}
+

@@ -2,7 +2,24 @@ target/
 *.metallib
 *.air
 *.safetensors
+
 .idea/
 .vscode/
 *.swp
 .DS_Store
+
+# Python cache / local env noise
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Experiment and run artifacts
+runs/summary.json
+runs/run_*/
+runs/oracle_run_*/
+runs/bundles/
+experiments/runs/
+
+# Keep checked-in oracle baselines
+!runs/oracles/
+!runs/oracles/**

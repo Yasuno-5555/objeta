@@ -29,7 +29,12 @@ REQUIRED_FIELDS = [
     "forward_wall_ms_avg", "moe_wall_ms_avg", "non_moe_wall_ms_avg", "moe_fraction",
     "avg_experts_per_layer", "avg_bytes_read", "warm_hit_rate", "cold_load_count",
     "first_garbage", "first_repetition", "entropy_first", "entropy_last", "entropy_min",
-    "entropy_max"
+    "entropy_max", "strategy_hash", "tokenizer_hash", "config_hash", "lm_head_hash",
+    "embed_hash", "weight_manifest_hash", "logical_expert_bytes_requested",
+    "actual_expert_bytes_loaded", "resident_cache_bytes_reused",
+    "resident_cache_hit_count", "resident_cache_miss_count", "direct_cold_load_count",
+    "resident_cache_enabled", "resident_cache_capacity_bytes",
+    "resident_cache_resident_bytes"
 ]
 
 def validate_summary_schema(summary):
@@ -194,6 +199,7 @@ def generate(prompt_ids, max_tokens=20, temperature=0.7, top_k=40, tok=None, ear
 
     generated = []
     entropies = list(prefill_entropies)
+    step_metrics = []
     t_start = time.perf_counter()
     
     aborted = False
@@ -233,8 +239,20 @@ def generate(prompt_ids, max_tokens=20, temperature=0.7, top_k=40, tok=None, ear
                 print(f"Early Abort triggered: {abort_reason} at step {step}")
                 break
 
+        step_t0 = time.perf_counter()
         _, indices, values, ent = rust_step(next_token, pos, pos+1, max(50, top_k))
+        step_time_ms = (time.perf_counter() - step_t0) * 1000.0
         entropies.append(ent)
+        step_metrics.append({
+            "event": "decode_step",
+            "step": step + 1,
+            "token_id": int(next_token),
+            "token_text": tok.decode([next_token]) if tok is not None else "",
+            "entropy": float(ent),
+            "step_time_ms": float(step_time_ms),
+            "cache_warm_hits": None,
+            "cache_cold_loads": None,
+        })
 
         if temperature == 0:
             next_token = int(indices[0])
@@ -248,7 +266,7 @@ def generate(prompt_ids, max_tokens=20, temperature=0.7, top_k=40, tok=None, ear
     total_s = time.perf_counter() - t_start
     n_gen = len(generated)
     print(f"\n  {n_gen} tokens in {total_s:.1f}s ({n_gen/total_s:.2f} tok/s)")
-    return generated, entropies, aborted, abort_reason, abort_step
+    return generated, entropies, step_metrics, aborted, abort_reason, abort_step
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Qwen3.6 Rust executor smoke/full generation")
@@ -305,6 +323,7 @@ def main():
                 strategy_dict.update(json.load(f))
         else:
             print(f"Warning: strategy config file '{strat_path}' not found. Using defaults.")
+    strategy_hash = hashlib.sha256(json.dumps(strategy_dict, sort_keys=True).encode("utf-8")).hexdigest()
 
     # Override with positional args if provided
     if args.fusion_ratio is not None:
@@ -410,7 +429,7 @@ def main():
     prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:8]
 
     print(f"── Prompt: \"{prompt}\" ──")
-    gen, entropies, aborted, abort_reason, abort_step = generate(
+    gen, entropies, step_metrics, aborted, abort_reason, abort_step = generate(
         ids, max_tokens=args.max_tokens, temperature=args.temperature, top_k=args.top_k, tok=tok, early_abort=args.early_abort
     )
     text = tok.decode(gen, skip_special_tokens=True)
@@ -423,9 +442,20 @@ def main():
     avg_bytes_read = 0.0
     warm_hit_rate = 0.0
     cold_load_count = 0
+    logical_expert_bytes_requested = 0
+    actual_expert_bytes_loaded = 0
+    resident_cache_bytes_reused = 0
+    resident_cache_hit_count = 0
+    resident_cache_miss_count = 0
+    direct_cold_load_count = 0
+    resident_cache_enabled = False
+    resident_cache_capacity_bytes = 0
+    resident_cache_resident_bytes = 0
+    resident_cache_hit_rate = 0.0
     moe_fraction = 0.0
     avg_forward_wall_ms = 0.0
     avg_moe_wall_ms = 0.0
+    stats_json = None
 
     if hasattr(lib, "lko_runner_get_moe_stats_json"):
         stats_ptr = lib.lko_runner_get_moe_stats_json()
@@ -437,6 +467,16 @@ def main():
             
             avg_executed_experts = summary_stats.get("avg_executed_experts", 0.0)
             avg_bytes_read = summary_stats.get("avg_bytes_read", 0.0)
+            logical_expert_bytes_requested = int(summary_stats.get("logical_expert_bytes_requested", 0))
+            actual_expert_bytes_loaded = int(summary_stats.get("actual_expert_bytes_loaded", 0))
+            resident_cache_bytes_reused = int(summary_stats.get("resident_cache_bytes_reused", 0))
+            resident_cache_hit_count = int(summary_stats.get("resident_cache_hit_count", 0))
+            resident_cache_miss_count = int(summary_stats.get("resident_cache_miss_count", 0))
+            direct_cold_load_count = int(summary_stats.get("direct_cold_load_count", 0))
+            resident_cache_enabled = bool(summary_stats.get("resident_cache_enabled", False))
+            resident_cache_capacity_bytes = int(summary_stats.get("resident_cache_capacity_bytes", 0))
+            resident_cache_resident_bytes = int(summary_stats.get("resident_cache_resident_bytes", 0))
+            resident_cache_hit_rate = float(summary_stats.get("resident_cache_hit_rate", 0.0))
             
             warm_hits = summary_stats.get("avg_warm_hit_count", 0.0) * summary_stats.get("total_calls", 0.0)
             cold_hits = summary_stats.get("avg_cold_hit_count", 0.0) * summary_stats.get("total_calls", 0.0)
@@ -466,12 +506,23 @@ def main():
     # Save effective strategy.json inside run directory
     with open(run_dir / "strategy.json", "w") as f:
         json.dump(strategy_dict, f, indent=2)
+    with open(run_dir / "output.txt", "w") as f:
+        f.write(text)
+    with open(run_dir / "metrics.jsonl", "w") as f:
+        for metric in step_metrics:
+            f.write(json.dumps(metric, ensure_ascii=False) + "\n")
+        if stats_json is not None:
+            for event in stats_json.get("moe_io_events", []):
+                f.write(json.dumps({"event": "moe_io", **event}, ensure_ascii=False) + "\n")
 
     summary = {
         "strategy_name": args.strategy,
+        "strategy_hash": strategy_hash,
         "git_commit": get_git_commit(),
         "model_id": "Qwen3.6-35B-A3B",
         "prompt_hash": prompt_hash,
+        "token_budget": args.max_tokens,
+        "generated_tokens": len(gen),
         "tok_s": len(gen) / (total_time_ms / 1000.0) if total_time_ms > 0 else 0.0,
         "total_wall_ms": total_time_ms,
         "forward_wall_ms_avg": avg_forward_wall_ms,
@@ -481,6 +532,16 @@ def main():
         "avg_experts_per_layer": avg_executed_experts,
         "avg_executed_experts": avg_executed_experts, # Alias for backwards compatibility in tests
         "avg_bytes_read": avg_bytes_read,
+        "logical_expert_bytes_requested": logical_expert_bytes_requested,
+        "actual_expert_bytes_loaded": actual_expert_bytes_loaded,
+        "resident_cache_bytes_reused": resident_cache_bytes_reused,
+        "resident_cache_hit_count": resident_cache_hit_count,
+        "resident_cache_miss_count": resident_cache_miss_count,
+        "direct_cold_load_count": direct_cold_load_count,
+        "resident_cache_enabled": resident_cache_enabled,
+        "resident_cache_capacity_bytes": resident_cache_capacity_bytes,
+        "resident_cache_resident_bytes": resident_cache_resident_bytes,
+        "resident_cache_hit_rate": resident_cache_hit_rate,
         "warm_hit_rate": warm_hit_rate,
         "cold_load_count": cold_load_count,
         "first_garbage": first_garbage,
@@ -494,8 +555,14 @@ def main():
         "aborted": aborted,
         "abort_reason": abort_reason,
         "abort_step": abort_step,
+        "output": text,
         
         # Debug/Integrity metadata
+        "tokenizer_hash": integrity_hashes["tokenizer_hash"],
+        "config_hash": integrity_hashes["config_hash"],
+        "lm_head_hash": integrity_hashes["lm_head_hash"],
+        "embed_hash": integrity_hashes["embed_hash"],
+        "weight_manifest_hash": integrity_hashes["weight_manifest_hash"],
         "integrity_hashes": integrity_hashes,
         "effective_debug_switches": strategy_dict.get("debug_switches"),
     }

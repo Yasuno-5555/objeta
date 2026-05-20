@@ -67,7 +67,7 @@ def main():
                 errors.append(f"[{strat}] first_garbage is not None: {fg}")
                 
             # 2. Check entropy is not NaN or inf
-            entropy = summary.get("avg_entropy")
+            entropy = summary.get("entropy_first")
             if entropy is None or math.isnan(entropy) or math.isinf(entropy):
                 errors.append(f"[{strat}] invalid entropy: {entropy}")
                 

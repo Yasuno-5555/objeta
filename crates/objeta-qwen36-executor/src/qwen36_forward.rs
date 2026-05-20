@@ -837,6 +837,30 @@ struct LayerWeights {
 
 use std::collections::BTreeSet;
 
+fn resident_cache_enabled(capacity: usize) -> bool {
+    capacity > 0
+}
+
+fn insert_resident_cache_entry(
+    cache: &mut HashMap<(usize, usize), (Vec<f32>, Vec<f32>, Vec<f32>)>,
+    order: &mut Vec<(usize, usize)>,
+    capacity: usize,
+    key: (usize, usize),
+    entry: (Vec<f32>, Vec<f32>, Vec<f32>),
+) {
+    if !resident_cache_enabled(capacity) {
+        return;
+    }
+    cache.insert(key, entry);
+    order.retain(|k| *k != key);
+    order.insert(0, key);
+    while order.len() > capacity {
+        if let Some(old_key) = order.pop() {
+            cache.remove(&old_key);
+        }
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct LayerTrace {
     pub layer: usize,
@@ -867,6 +891,12 @@ pub struct MoELayerStats {
     pub total_cold_hit_count: u64,
     pub total_compute_sec: f64,
     pub total_bytes_read: u64,
+    pub total_logical_bytes_requested: u64,
+    pub total_actual_bytes_loaded: u64,
+    pub total_resident_cache_bytes_reused: u64,
+    pub total_resident_cache_hit_count: u64,
+    pub total_resident_cache_miss_count: u64,
+    pub total_direct_cold_load_count: u64,
     pub total_router_sec: f64,
     pub total_select_sec: f64,
     pub total_load_sec: f64,
@@ -891,6 +921,19 @@ pub struct MoELayerStats {
     pub last_dispatch_weights: Vec<f32>,
     pub last_selected_count: usize,
     pub last_selected_renormalized: bool,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, Debug)]
+pub struct MoEIoEvent {
+    pub step: usize,
+    pub token_id: usize,
+    pub layer_id: usize,
+    pub selected_experts: Vec<usize>,
+    pub logical_bytes: u64,
+    pub actual_loaded_bytes: u64,
+    pub resident_hits: u64,
+    pub cold_loads: u64,
+    pub resident_bytes: u64,
 }
 
 #[derive(Clone, Default)]
@@ -965,6 +1008,7 @@ pub struct Qwen36Runner {
     pub lm_head_wall_sec: f64,
     pub forward_calls: u64,
     pub forward_wall_sec: f64,
+    pub moe_io_events: Vec<MoEIoEvent>,
     
     // Expert Policy config fields
     pub expert_policy: crate::strategy::ExpertPolicyConfig,
@@ -977,6 +1021,7 @@ pub struct Qwen36Runner {
     // Debug overrides
     pub debug_force_attn_full: bool,
     pub debug_force_moe_skip: bool,
+    pub use_fused_moe: bool,
 }
 
 impl Qwen36Runner {
@@ -1145,6 +1190,7 @@ impl Qwen36Runner {
             lm_head_wall_sec: 0.0,
             forward_calls: 0,
             forward_wall_sec: 0.0,
+            moe_io_events: Vec::new(),
             
             expert_policy: crate::strategy::ExpertPolicyConfig::Exact,
             moe_prune_mode: 0,
@@ -1155,6 +1201,9 @@ impl Qwen36Runner {
             moe_ema_output_norm: vec![vec![1.0f32; 256]; 40],
             debug_force_attn_full: false,
             debug_force_moe_skip: false,
+            use_fused_moe: std::env::var("OBJETA_USE_FUSED_MOE")
+                .map(|v| v == "1")
+                .unwrap_or(false),
         })
     }
 
@@ -1562,6 +1611,10 @@ impl Qwen36Runner {
                     let mut items: Vec<(usize, f32)> = eidx.iter().copied().zip(ew.iter().copied()).collect();
                     items.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
                     
+                    if l == 0 && self.step_counter == 1 {
+                        println!("[DEBUG TopP] l={} step={} p={} min={} max={} items={:?}", l, self.step_counter, p, min_experts, max_experts, items);
+                    }
+                    
                     let mut kept_idx = Vec::new();
                     let mut kept_w = Vec::new();
                     let mut cum_w = 0.0f32;
@@ -1575,6 +1628,9 @@ impl Qwen36Runner {
                         if (i + 1) >= *max_experts {
                             break;
                         }
+                    }
+                    if l == 0 && self.step_counter == 1 {
+                        println!("[DEBUG TopP] kept={}", kept_idx.len());
                     }
                     let sum: f32 = kept_w.iter().sum::<f32>().max(1e-12);
                     for w in &mut kept_w { *w /= sum; }
@@ -1688,36 +1744,91 @@ impl Qwen36Runner {
             }
         }
 
+        if self.use_fused_moe {
+            let out = crate::moe_dispatch::fused_moe_q4_selected_v0(
+                &self.gu_mmaps[l],
+                &self.down_mmaps[l],
+                h,
+                &eidx,
+                &ew,
+            );
+
+            // Update stats
+            let n = eidx.len();
+            let logical_bytes_requested = n as u64 * EXPERT_TOTAL_BYTES;
+            self.moe_stats[l].calls += 1;
+            self.moe_stats[l].total_executed_experts += n as u64;
+            self.moe_stats[l].total_cold_hit_count += n as u64;
+            self.moe_stats[l].total_bytes_read += n as u64 * EXPERT_TOTAL_BYTES;
+            self.moe_stats[l].total_logical_bytes_requested += logical_bytes_requested;
+            self.moe_stats[l].total_actual_bytes_loaded += n as u64 * EXPERT_TOTAL_BYTES;
+            self.moe_stats[l].total_resident_cache_miss_count += n as u64;
+            self.moe_stats[l].total_direct_cold_load_count += n as u64;
+            self.moe_stats[l].last_selected_ids = eidx.clone();
+            self.moe_stats[l].last_selected_weights = ew.clone();
+            for &eid in &eidx {
+                self.moe_stats[l].unique_expert_ids.insert(eid);
+            }
+
+            let resident_bytes = self.expert_cache.len() as u64 * EXPERT_TOTAL_BYTES;
+            let token_id = self
+                .current_step_trace
+                .as_ref()
+                .map(|trace| trace.token_id)
+                .unwrap_or(0);
+            self.moe_io_events.push(MoEIoEvent {
+                step: self.step_counter,
+                token_id,
+                layer_id: l,
+                selected_experts: eidx.clone(),
+                logical_bytes: logical_bytes_requested,
+                actual_loaded_bytes: logical_bytes_requested,
+                resident_hits: 0,
+                cold_loads: n as u64,
+                resident_bytes,
+            });
+
+            return out;
+        }
+
         let mut out = vec![0.0f32; HDIM];
         let mut warm_hits = 0u64;
         let mut cold_hits = 0u64;
+        let logical_bytes_requested = eidx.len() as u64 * EXPERT_TOTAL_BYTES;
 
         // ── Phase 1: gather expert IDs, separate cached from uncached ──
         let n = eidx.len();
         let mut uncached_ids: Vec<usize> = Vec::with_capacity(n);
         let mut uncached_rws: Vec<f32> = Vec::with_capacity(n);
 
+        let resident_cache_capacity = self.expert_cache_size;
+        let resident_cache_on = resident_cache_enabled(resident_cache_capacity);
+
         for (&eid, &rw) in eidx.iter().zip(ew.iter()) {
             let eid = eid as usize;
             let key = (l, eid);
 
             // Check hashmap cache first
-            if let Some(pos) = self.expert_cache_order.iter().position(|k| *k == key) {
-                self.expert_cache_order.remove(pos);
-                self.expert_cache_order.insert(0, key);
-                let (gate, up, down) = &self.expert_cache[&key];
-                // Cached: compute with pre-allocated scratch (fast, no I/O)
-                let gate_out = &mut self.moe_gate_buf;
-                fill_gemv_f32(gate_out, gate, h, 512, HDIM);
-                let up_out = &mut self.moe_up_buf;
-                fill_gemv_f32(up_out, up, h, 512, HDIM);
-                let hidden = &mut self.moe_hidden_buf;
-                for i in 0..512 { hidden[i] = gate_out[i] / (1.0 + (-gate_out[i]).exp()) * up_out[i]; }
-                let down_out = &mut self.moe_down_buf;
-                fill_gemv_f32(down_out, down, hidden, HDIM, 512);
-                for i in 0..HDIM { out[i] += down_out[i] * rw; }
-                warm_hits += 1;
-            } else {
+            if resident_cache_on {
+                if let Some(pos) = self.expert_cache_order.iter().position(|k| *k == key) {
+                    self.expert_cache_order.remove(pos);
+                    self.expert_cache_order.insert(0, key);
+                    let (gate, up, down) = &self.expert_cache[&key];
+                    // Cached: compute with pre-allocated scratch (fast, no I/O)
+                    let gate_out = &mut self.moe_gate_buf;
+                    fill_gemv_f32(gate_out, gate, h, 512, HDIM);
+                    let up_out = &mut self.moe_up_buf;
+                    fill_gemv_f32(up_out, up, h, 512, HDIM);
+                    let hidden = &mut self.moe_hidden_buf;
+                    for i in 0..512 { hidden[i] = gate_out[i] / (1.0 + (-gate_out[i]).exp()) * up_out[i]; }
+                    let down_out = &mut self.moe_down_buf;
+                    fill_gemv_f32(down_out, down, hidden, HDIM, 512);
+                    for i in 0..HDIM { out[i] += down_out[i] * rw; }
+                    warm_hits += 1;
+                    continue;
+                }
+            }
+            {
                 uncached_ids.push(eid);
                 uncached_rws.push(rw);
                 cold_hits += 1;
@@ -1732,12 +1843,15 @@ impl Qwen36Runner {
 
             let results: Vec<(Vec<f32>, (usize, usize), (Vec<f32>, Vec<f32>, Vec<f32>))> =
                 uncached_ids.par_iter().zip(uncached_rws.par_iter()).map(|(&eid, &rw)| {
-                    let gu_off = eid * 1_310_720;
-                    let d_off = eid * 655_360;
+                    let gu_off = eid * EXPERT_GATE_UP_BYTES as usize;
+                    let d_off = eid * EXPERT_DOWN_BYTES as usize;
                     let gu_ptr = unsafe { (gu_addr as *const u8).add(gu_off) };
                     let d_ptr = unsafe { (d_addr as *const u8).add(d_off) };
                     let (gate, up, down) = crate::moe_dispatch::dequantize_expert_f32(
-                        gu_ptr, 1_310_720, d_ptr, 655_360,
+                        gu_ptr,
+                        EXPERT_GATE_UP_BYTES as i32,
+                        d_ptr,
+                        EXPERT_DOWN_BYTES as i32,
                     );
 
                     // GEMV with local scratch (allocation: ~8KB, vs SSD read: ~15ms)
@@ -1757,13 +1871,13 @@ impl Qwen36Runner {
             // ── Phase 3: sum outputs + update cache ──
             for (output, key, entry) in results {
                 for i in 0..HDIM { out[i] += output[i]; }
-                self.expert_cache.insert(key, entry);
-                self.expert_cache_order.insert(0, key);
-            }
-            while self.expert_cache_order.len() > 50 {
-                if let Some(old_key) = self.expert_cache_order.pop() {
-                    self.expert_cache.remove(&old_key);
-                }
+                insert_resident_cache_entry(
+                    &mut self.expert_cache,
+                    &mut self.expert_cache_order,
+                    resident_cache_capacity,
+                    key,
+                    entry,
+                );
             }
         }
 
@@ -1772,12 +1886,36 @@ impl Qwen36Runner {
         self.moe_stats[l].total_executed_experts += n as u64;
         self.moe_stats[l].total_warm_hit_count += warm_hits;
         self.moe_stats[l].total_cold_hit_count += cold_hits;
-        self.moe_stats[l].total_bytes_read += uncached_ids.len() as u64 * (1_310_720 + 655_360);
+        self.moe_stats[l].total_bytes_read += uncached_ids.len() as u64 * EXPERT_TOTAL_BYTES;
+        self.moe_stats[l].total_logical_bytes_requested += logical_bytes_requested;
+        self.moe_stats[l].total_actual_bytes_loaded += uncached_ids.len() as u64 * EXPERT_TOTAL_BYTES;
+        self.moe_stats[l].total_resident_cache_bytes_reused += warm_hits * EXPERT_TOTAL_BYTES;
+        self.moe_stats[l].total_resident_cache_hit_count += warm_hits;
+        self.moe_stats[l].total_resident_cache_miss_count += cold_hits;
+        self.moe_stats[l].total_direct_cold_load_count += uncached_ids.len() as u64;
         self.moe_stats[l].last_selected_ids = eidx.iter().map(|&x| x as usize).collect();
         self.moe_stats[l].last_selected_weights = ew.clone();
         for &eid in &eidx {
             self.moe_stats[l].unique_expert_ids.insert(eid as usize);
         }
+
+        let resident_bytes = self.expert_cache.len() as u64 * EXPERT_TOTAL_BYTES;
+        let token_id = self
+            .current_step_trace
+            .as_ref()
+            .map(|trace| trace.token_id)
+            .unwrap_or(0);
+        self.moe_io_events.push(MoEIoEvent {
+            step: self.step_counter,
+            token_id,
+            layer_id: l,
+            selected_experts: eidx.iter().map(|&x| x as usize).collect(),
+            logical_bytes: logical_bytes_requested,
+            actual_loaded_bytes: uncached_ids.len() as u64 * EXPERT_TOTAL_BYTES,
+            resident_hits: warm_hits,
+            cold_loads: uncached_ids.len() as u64,
+            resident_bytes,
+        });
 
         out
     }
@@ -1818,6 +1956,15 @@ impl Qwen36Runner {
         if !self.expert_freq_ready {
             eprintln!("[objeta] Warning: building caches without warmup — hit rate will be low");
         }
+        self.expert_cache.clear();
+        self.expert_cache_order.clear();
+        self.expert_cache_max = cache_size;
+        self.expert_cache_size = cache_size;
+        if cache_size == 0 {
+            eprintln!("[objeta] Resident expert cache disabled (capacity=0); all experts use direct/cold path.");
+            unsafe { crate::moe_dispatch::lko_moe_clear_cache(); }
+            return;
+        }
         let total_layers: usize = (0..40).filter(|&l| self.layers[l].is_gqa || self.moe_on_deltanet).count();
         let mem_per_expert_mb = (512.0 * 2048.0 * 3.0 * 4.0) / (1024.0 * 1024.0); // ~12.6MB f32
         let est_mb = total_layers as f64 * cache_size as f64 * mem_per_expert_mb;
@@ -1837,8 +1984,40 @@ impl Qwen36Runner {
             };
             total += n;
         }
-        self.expert_cache_size = cache_size;
         eprintln!("[objeta] Cached {total} experts across {total_layers} active layers.");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{insert_resident_cache_entry, resident_cache_enabled};
+    use std::collections::HashMap;
+
+    fn dummy_entry(seed: f32) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+        (vec![seed], vec![seed + 1.0], vec![seed + 2.0])
+    }
+
+    #[test]
+    fn resident_cache_disabled_bypasses_insert() {
+        let mut cache: HashMap<(usize, usize), (Vec<f32>, Vec<f32>, Vec<f32>)> = HashMap::new();
+        let mut order = Vec::new();
+        insert_resident_cache_entry(&mut cache, &mut order, 0, (3, 7), dummy_entry(1.0));
+        assert!(!resident_cache_enabled(0));
+        assert!(cache.is_empty());
+        assert!(order.is_empty());
+    }
+
+    #[test]
+    fn resident_cache_enabled_evicts_to_capacity() {
+        let mut cache: HashMap<(usize, usize), (Vec<f32>, Vec<f32>, Vec<f32>)> = HashMap::new();
+        let mut order = Vec::new();
+        insert_resident_cache_entry(&mut cache, &mut order, 2, (0, 1), dummy_entry(1.0));
+        insert_resident_cache_entry(&mut cache, &mut order, 2, (0, 2), dummy_entry(2.0));
+        insert_resident_cache_entry(&mut cache, &mut order, 2, (0, 3), dummy_entry(3.0));
+        assert_eq!(order, vec![(0, 3), (0, 2)]);
+        assert!(!cache.contains_key(&(0, 1)));
+        assert!(cache.contains_key(&(0, 2)));
+        assert!(cache.contains_key(&(0, 3)));
     }
 }
 
@@ -2048,6 +2227,10 @@ impl Qwen36Runner {
 // ── C API for full executor ──────────────────────────────────────────────
 
 static mut RUNNER: Option<Qwen36Runner> = None;
+
+const EXPERT_GATE_UP_BYTES: u64 = 1_310_720;
+const EXPERT_DOWN_BYTES: u64 = 655_360;
+const EXPERT_TOTAL_BYTES: u64 = EXPERT_GATE_UP_BYTES + EXPERT_DOWN_BYTES;
 
 #[inline]
 fn objeta_debug_enabled() -> bool {
@@ -2667,6 +2850,12 @@ pub extern "C" fn lko_runner_set_moe_top_p(p: f32) -> i32 {
     unsafe {
         if let Some(r) = RUNNER.as_mut() {
             r.moe_top_p = p;
+            let p_val = p.clamp(0.0, 1.0);
+            r.set_expert_policy(crate::strategy::ExpertPolicyConfig::TopP {
+                p: p_val,
+                min_experts: r.min_experts.max(1),
+                max_experts: r.max_experts.max(r.min_experts.max(1)),
+            });
             1
         } else {
             0
@@ -2679,6 +2868,20 @@ pub extern "C" fn lko_runner_set_moe_prune_mode(mode: i32) -> i32 {
     unsafe {
         if let Some(r) = RUNNER.as_mut() {
             r.moe_prune_mode = mode;
+            if mode == 1 {
+                r.set_expert_policy(crate::strategy::ExpertPolicyConfig::Contribution {
+                    threshold: r.moe_contrib_threshold.clamp(0.0, 1.0),
+                    min_experts: r.min_experts.max(1),
+                    max_experts: r.max_experts.max(r.min_experts.max(1)),
+                    ema_beta: 0.95,
+                });
+            } else {
+                r.set_expert_policy(crate::strategy::ExpertPolicyConfig::TopP {
+                    p: r.moe_top_p.clamp(0.0, 1.0),
+                    min_experts: r.min_experts.max(1),
+                    max_experts: r.max_experts.max(r.min_experts.max(1)),
+                });
+            }
             1
         } else {
             0
@@ -2691,6 +2894,13 @@ pub extern "C" fn lko_runner_set_moe_contrib_threshold(threshold: f32) -> i32 {
     unsafe {
         if let Some(r) = RUNNER.as_mut() {
             r.moe_contrib_threshold = threshold;
+            let t_val = threshold.clamp(0.0, 1.0);
+            r.set_expert_policy(crate::strategy::ExpertPolicyConfig::Contribution {
+                threshold: t_val,
+                min_experts: r.min_experts.max(1),
+                max_experts: r.max_experts.max(r.min_experts.max(1)),
+                ema_beta: 0.95,
+            });
             1
         } else {
             0
@@ -2703,6 +2913,45 @@ pub extern "C" fn lko_runner_set_moe_min_experts(min_experts: i32) -> i32 {
     unsafe {
         if let Some(r) = RUNNER.as_mut() {
             r.min_experts = min_experts as usize;
+            let min_e = min_experts.max(1) as usize;
+            let max_e = r.max_experts.max(min_e);
+            let new_policy = match &r.expert_policy {
+                crate::strategy::ExpertPolicyConfig::Exact => crate::strategy::ExpertPolicyConfig::Exact,
+                crate::strategy::ExpertPolicyConfig::TopP { p, .. } => crate::strategy::ExpertPolicyConfig::TopP {
+                    p: *p,
+                    min_experts: min_e,
+                    max_experts: max_e,
+                },
+                crate::strategy::ExpertPolicyConfig::Contribution {
+                    threshold,
+                    ema_beta,
+                    ..
+                } => crate::strategy::ExpertPolicyConfig::Contribution {
+                    threshold: *threshold,
+                    min_experts: min_e,
+                    max_experts: max_e,
+                    ema_beta: *ema_beta,
+                },
+                crate::strategy::ExpertPolicyConfig::AdaptiveEntropy {
+                    low_entropy_p,
+                    mid_entropy_p,
+                    high_entropy_p,
+                    repetition_p,
+                    low_entropy_threshold,
+                    mid_entropy_threshold,
+                    ..
+                } => crate::strategy::ExpertPolicyConfig::AdaptiveEntropy {
+                    low_entropy_p: *low_entropy_p,
+                    mid_entropy_p: *mid_entropy_p,
+                    high_entropy_p: *high_entropy_p,
+                    repetition_p: *repetition_p,
+                    low_entropy_threshold: *low_entropy_threshold,
+                    mid_entropy_threshold: *mid_entropy_threshold,
+                    min_experts: min_e,
+                    max_experts: max_e,
+                },
+            };
+            r.set_expert_policy(new_policy);
             1
         } else {
             0
@@ -2715,6 +2964,45 @@ pub extern "C" fn lko_runner_set_moe_max_experts(max_experts: i32) -> i32 {
     unsafe {
         if let Some(r) = RUNNER.as_mut() {
             r.max_experts = max_experts as usize;
+            let min_e = r.min_experts.max(1);
+            let max_e = (max_experts.max(1) as usize).max(min_e);
+            let new_policy = match &r.expert_policy {
+                crate::strategy::ExpertPolicyConfig::Exact => crate::strategy::ExpertPolicyConfig::Exact,
+                crate::strategy::ExpertPolicyConfig::TopP { p, .. } => crate::strategy::ExpertPolicyConfig::TopP {
+                    p: *p,
+                    min_experts: min_e,
+                    max_experts: max_e,
+                },
+                crate::strategy::ExpertPolicyConfig::Contribution {
+                    threshold,
+                    ema_beta,
+                    ..
+                } => crate::strategy::ExpertPolicyConfig::Contribution {
+                    threshold: *threshold,
+                    min_experts: min_e,
+                    max_experts: max_e,
+                    ema_beta: *ema_beta,
+                },
+                crate::strategy::ExpertPolicyConfig::AdaptiveEntropy {
+                    low_entropy_p,
+                    mid_entropy_p,
+                    high_entropy_p,
+                    repetition_p,
+                    low_entropy_threshold,
+                    mid_entropy_threshold,
+                    ..
+                } => crate::strategy::ExpertPolicyConfig::AdaptiveEntropy {
+                    low_entropy_p: *low_entropy_p,
+                    mid_entropy_p: *mid_entropy_p,
+                    high_entropy_p: *high_entropy_p,
+                    repetition_p: *repetition_p,
+                    low_entropy_threshold: *low_entropy_threshold,
+                    mid_entropy_threshold: *mid_entropy_threshold,
+                    min_experts: min_e,
+                    max_experts: max_e,
+                },
+            };
+            r.set_expert_policy(new_policy);
             1
         } else {
             0
@@ -2762,6 +3050,7 @@ pub extern "C" fn lko_runner_reset_moe_stats() -> i32 {
             r.lm_head_wall_sec = 0.0;
             r.forward_calls = 0;
             r.forward_wall_sec = 0.0;
+            r.moe_io_events.clear();
             1
         } else {
             0
@@ -2787,6 +3076,12 @@ pub extern "C" fn lko_runner_get_moe_stats_json() -> *mut std::os::raw::c_char {
                         "avg_cold_hit_count": if s.calls > 0 { s.total_cold_hit_count as f64 / s.calls as f64 } else { 0.0 },
                         "avg_compute_ms": if s.calls > 0 { (s.total_compute_sec * 1000.0) / s.calls as f64 } else { 0.0 },
                         "avg_bytes_read": if s.calls > 0 { s.total_bytes_read as f64 / s.calls as f64 } else { 0.0 },
+                        "avg_logical_expert_bytes_requested": if s.calls > 0 { s.total_logical_bytes_requested as f64 / s.calls as f64 } else { 0.0 },
+                        "avg_actual_expert_bytes_loaded": if s.calls > 0 { s.total_actual_bytes_loaded as f64 / s.calls as f64 } else { 0.0 },
+                        "avg_resident_cache_bytes_reused": if s.calls > 0 { s.total_resident_cache_bytes_reused as f64 / s.calls as f64 } else { 0.0 },
+                        "avg_resident_cache_hit_count": if s.calls > 0 { s.total_resident_cache_hit_count as f64 / s.calls as f64 } else { 0.0 },
+                        "avg_resident_cache_miss_count": if s.calls > 0 { s.total_resident_cache_miss_count as f64 / s.calls as f64 } else { 0.0 },
+                        "avg_direct_cold_load_count": if s.calls > 0 { s.total_direct_cold_load_count as f64 / s.calls as f64 } else { 0.0 },
                         "avg_router_ms": if s.calls > 0 { (s.total_router_sec * 1000.0) / s.calls as f64 } else { 0.0 },
                         "avg_expert_select_ms": if s.calls > 0 { (s.total_select_sec * 1000.0) / s.calls as f64 } else { 0.0 },
                         "avg_expert_load_ms": if s.calls > 0 { (s.total_load_sec * 1000.0) / s.calls as f64 } else { 0.0 },
@@ -2822,6 +3117,30 @@ pub extern "C" fn lko_runner_get_moe_stats_json() -> *mut std::os::raw::c_char {
                 let total_cold_hits: u64 = r.moe_stats.iter().map(|s| s.total_cold_hit_count).sum();
                 let total_sec: f64 = r.moe_stats.iter().map(|s| s.total_compute_sec).sum();
                 let total_bytes: u64 = r.moe_stats.iter().map(|s| s.total_bytes_read).sum();
+                let total_logical_bytes: u64 =
+                    r.moe_stats.iter().map(|s| s.total_logical_bytes_requested).sum();
+                let total_actual_loaded_bytes: u64 =
+                    r.moe_stats.iter().map(|s| s.total_actual_bytes_loaded).sum();
+                let total_resident_reused_bytes: u64 = r
+                    .moe_stats
+                    .iter()
+                    .map(|s| s.total_resident_cache_bytes_reused)
+                    .sum();
+                let total_resident_hit_count: u64 = r
+                    .moe_stats
+                    .iter()
+                    .map(|s| s.total_resident_cache_hit_count)
+                    .sum();
+                let total_resident_miss_count: u64 = r
+                    .moe_stats
+                    .iter()
+                    .map(|s| s.total_resident_cache_miss_count)
+                    .sum();
+                let total_direct_cold_load_count: u64 = r
+                    .moe_stats
+                    .iter()
+                    .map(|s| s.total_direct_cold_load_count)
+                    .sum();
                 let total_router_sec: f64 = r.moe_stats.iter().map(|s| s.total_router_sec).sum();
                 let total_select_sec: f64 = r.moe_stats.iter().map(|s| s.total_select_sec).sum();
                 let total_load_sec: f64 = r.moe_stats.iter().map(|s| s.total_load_sec).sum();
@@ -2858,6 +3177,9 @@ pub extern "C" fn lko_runner_get_moe_stats_json() -> *mut std::os::raw::c_char {
                     r.forward_stats.iter().map(|s| s.total_layer_wall_sec).sum();
                 let total_layer_moe_wall_sec: f64 =
                     r.forward_stats.iter().map(|s| s.total_moe_wall_sec).sum();
+                let resident_cache_enabled = resident_cache_enabled(r.expert_cache_size);
+                let resident_cache_capacity_bytes = r.expert_cache_size as u64 * EXPERT_TOTAL_BYTES;
+                let resident_cache_resident_bytes = r.expert_cache.len() as u64 * EXPERT_TOTAL_BYTES;
                 let json = serde_json::json!({
                     "summary": {
                         "total_calls": total_calls,
@@ -2869,6 +3191,24 @@ pub extern "C" fn lko_runner_get_moe_stats_json() -> *mut std::os::raw::c_char {
                         "avg_cold_hit_count": if total_calls > 0 { total_cold_hits as f64 / total_calls as f64 } else { 0.0 },
                         "avg_compute_ms": if total_calls > 0 { (total_sec * 1000.0) / total_calls as f64 } else { 0.0 },
                         "avg_bytes_read": if total_calls > 0 { total_bytes as f64 / total_calls as f64 } else { 0.0 },
+                        "logical_expert_bytes_requested": total_logical_bytes,
+                        "actual_expert_bytes_loaded": total_actual_loaded_bytes,
+                        "resident_cache_bytes_reused": total_resident_reused_bytes,
+                        "resident_cache_hit_count": total_resident_hit_count,
+                        "resident_cache_miss_count": total_resident_miss_count,
+                        "direct_cold_load_count": total_direct_cold_load_count,
+                        "resident_cache_enabled": resident_cache_enabled,
+                        "resident_cache_capacity_bytes": resident_cache_capacity_bytes,
+                        "resident_cache_resident_bytes": resident_cache_resident_bytes,
+                        "resident_cache_hit_rate": if (total_resident_hit_count + total_resident_miss_count) > 0 {
+                            total_resident_hit_count as f64 / (total_resident_hit_count + total_resident_miss_count) as f64
+                        } else { 0.0 },
+                        "avg_logical_expert_bytes_requested": if total_calls > 0 { total_logical_bytes as f64 / total_calls as f64 } else { 0.0 },
+                        "avg_actual_expert_bytes_loaded": if total_calls > 0 { total_actual_loaded_bytes as f64 / total_calls as f64 } else { 0.0 },
+                        "avg_resident_cache_bytes_reused": if total_calls > 0 { total_resident_reused_bytes as f64 / total_calls as f64 } else { 0.0 },
+                        "avg_resident_cache_hit_count": if total_calls > 0 { total_resident_hit_count as f64 / total_calls as f64 } else { 0.0 },
+                        "avg_resident_cache_miss_count": if total_calls > 0 { total_resident_miss_count as f64 / total_calls as f64 } else { 0.0 },
+                        "avg_direct_cold_load_count": if total_calls > 0 { total_direct_cold_load_count as f64 / total_calls as f64 } else { 0.0 },
                         "avg_router_ms": if total_calls > 0 { (total_router_sec * 1000.0) / total_calls as f64 } else { 0.0 },
                         "avg_expert_select_ms": if total_calls > 0 { (total_select_sec * 1000.0) / total_calls as f64 } else { 0.0 },
                         "avg_expert_load_ms": if total_calls > 0 { (total_load_sec * 1000.0) / total_calls as f64 } else { 0.0 },
@@ -2893,6 +3233,7 @@ pub extern "C" fn lko_runner_get_moe_stats_json() -> *mut std::os::raw::c_char {
                     },
                     "layers": layers,
                     "forward_layers": forward_layers,
+                    "moe_io_events": r.moe_io_events,
                     "effective_policy": {
                         "name": match &r.expert_policy {
                             crate::strategy::ExpertPolicyConfig::Exact => "exact",
@@ -2918,3 +3259,123 @@ pub extern "C" fn lko_runner_free_moe_stats_json(ptr: *mut std::os::raw::c_char)
         }
     }
 }
+
+#[no_mangle]
+pub extern "C" fn lko_runner_set_use_fused_moe(enabled: i32) -> i32 {
+    unsafe {
+        match &mut RUNNER {
+            Some(r) => {
+                r.use_fused_moe = enabled != 0;
+                1
+            }
+            None => 0,
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn lko_runner_selected_expert_q4(
+    layer_idx: i32,
+    x: *const f32,
+    expert_ids: *const i32,
+    routing_weights: *const f32,
+    n_selected: i32,
+    expert_out: *mut f32,
+    weighted_out: *mut f32,
+    routed_sum_out: *mut f32,
+) -> i32 {
+    if x.is_null() || expert_ids.is_null() || routing_weights.is_null() {
+        return -1;
+    }
+    let runner = unsafe { RUNNER.as_mut() }.expect("runner not initialized");
+    let l = layer_idx.clamp(0, 39) as usize;
+    let n_selected = n_selected.max(0) as usize;
+    let x = unsafe { std::slice::from_raw_parts(x, HDIM) };
+    let expert_ids = unsafe { std::slice::from_raw_parts(expert_ids, n_selected) };
+    let routing_weights = unsafe { std::slice::from_raw_parts(routing_weights, n_selected) };
+
+    let gu_addr = runner.gu_mmaps[l].as_ptr() as usize;
+    let d_addr = runner.down_mmaps[l].as_ptr() as usize;
+    let mut routed_sum = vec![0.0f32; HDIM];
+
+    for i in 0..n_selected {
+        let eid = expert_ids[i].max(0) as usize;
+        let rw = routing_weights[i];
+        let gu_off = eid * 1_310_720;
+        let d_off = eid * 655_360;
+        let gu_ptr = unsafe { (gu_addr as *const u8).add(gu_off) };
+        let d_ptr = unsafe { (d_addr as *const u8).add(d_off) };
+        let (gate, up, down) =
+            crate::moe_dispatch::dequantize_expert_f32(gu_ptr, 1_310_720, d_ptr, 655_360);
+
+        let gate_out_v = gemv_f32(&gate, x, 512, HDIM);
+        let up_out_v = gemv_f32(&up, x, 512, HDIM);
+        let mut hidden = vec![0.0f32; 512];
+        for j in 0..512 {
+            hidden[j] = gate_out_v[j] / (1.0 + (-gate_out_v[j]).exp()) * up_out_v[j];
+        }
+        let expert_v = gemv_f32(&down, &hidden, HDIM, 512);
+        let mut weighted_v = vec![0.0f32; HDIM];
+        for j in 0..HDIM {
+            weighted_v[j] = expert_v[j] * rw;
+            routed_sum[j] += weighted_v[j];
+        }
+
+        unsafe {
+            if !expert_out.is_null() {
+                std::ptr::copy_nonoverlapping(expert_v.as_ptr(), expert_out.add(i * HDIM), HDIM);
+            }
+            if !weighted_out.is_null() {
+                std::ptr::copy_nonoverlapping(
+                    weighted_v.as_ptr(),
+                    weighted_out.add(i * HDIM),
+                    HDIM,
+                );
+            }
+        }
+    }
+
+    unsafe {
+        if !routed_sum_out.is_null() {
+            std::ptr::copy_nonoverlapping(routed_sum.as_ptr(), routed_sum_out, HDIM);
+        }
+    }
+    n_selected as i32
+}
+
+
+#[no_mangle]
+pub extern "C" fn lko_runner_selected_expert_q4_fused(
+    layer_idx: i32,
+    x: *const f32,
+    expert_ids: *const i32,
+    routing_weights: *const f32,
+    n_selected: i32,
+    routed_sum_out: *mut f32,
+) -> i32 {
+    if x.is_null() || expert_ids.is_null() || routing_weights.is_null() || routed_sum_out.is_null() {
+        return -1;
+    }
+    let runner = unsafe { RUNNER.as_mut() }.expect("runner not initialized");
+    let l = layer_idx.clamp(0, 39) as usize;
+    let n_selected = n_selected.max(0) as usize;
+    let x_slice = unsafe { std::slice::from_raw_parts(x, HDIM) };
+    let expert_ids_slice = unsafe { std::slice::from_raw_parts(expert_ids, n_selected) };
+    let routing_weights_slice = unsafe { std::slice::from_raw_parts(routing_weights, n_selected) };
+
+    let eidx: Vec<usize> = expert_ids_slice.iter().map(|&id| id as usize).collect();
+
+    let out = crate::moe_dispatch::fused_moe_q4_selected_v0(
+        &runner.gu_mmaps[l],
+        &runner.down_mmaps[l],
+        x_slice,
+        &eidx,
+        routing_weights_slice,
+    );
+
+    unsafe {
+        std::ptr::copy_nonoverlapping(out.as_ptr(), routed_sum_out, HDIM);
+    }
+    n_selected as i32
+}
+

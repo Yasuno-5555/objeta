@@ -1,0 +1,1535 @@
+warning: unused variable: `is_refresh`
+  --> crates/objeta-routing/src/lib.rs:25:50
+   |
+25 |             let (precision_bits, full_attention, is_refresh) = match zone {
+   |                                                  ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_is_refresh`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `objeta-routing` (lib) generated 1 warning (run `cargo fix --lib -p objeta-routing` to apply 1 suggestion)
+warning: field `base_dir` is never read
+  --> crates/objeta-parser/src/lib.rs:93:5
+   |
+87 | pub struct ModelWeights {
+   |            ------------ field in this struct
+...
+93 |     base_dir: PathBuf,
+   |     ^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `objeta-parser` (lib) generated 1 warning
+warning: unused import: `StabilityMap`
+  --> crates/objeta-analysis/src/lib.rs:14:58
+   |
+14 | use objeta_core::{LayerProfile, LayerZone, PhaseProfile, StabilityMap, Result};
+   |                                                          ^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `svd_down_projection` is never used
+   --> crates/objeta-analysis/src/svd.rs:317:8
+    |
+317 | pub fn svd_down_projection(
+    |        ^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `randomized_svd_single` is never used
+   --> crates/objeta-analysis/src/svd.rs:339:4
+    |
+339 | fn randomized_svd_single(
+    |    ^^^^^^^^^^^^^^^^^^^^^
+
+warning: `objeta-analysis` (lib) generated 3 warnings (run `cargo fix --lib -p objeta-analysis` to apply 1 suggestion)
+warning: unused import: `rayon::prelude`
+  --> crates/objeta-moe/src/lib.rs:13:5
+   |
+13 | use rayon::prelude::*;
+   |     ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `rand::Rng`
+  --> crates/objeta-moe/src/lib.rs:11:5
+   |
+11 | use rand::Rng;
+   |     ^^^^^^^^^
+
+warning: unused variable: `entropy`
+   --> crates/objeta-moe/src/lib.rs:146:17
+    |
+146 |             let entropy: f32 = -probs
+    |                 ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_entropy`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `objeta-moe` (lib) generated 3 warnings (run `cargo fix --lib -p objeta-moe` to apply 1 suggestion)
+warning: unused import: `std::collections::BTreeMap`
+  --> crates/objeta-quantize/src/lib.rs:16:5
+   |
+16 | use std::collections::BTreeMap;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `sensitivity`
+   --> crates/objeta-quantize/src/lib.rs:243:5
+    |
+243 |     sensitivity: f64,
+    |     ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_sensitivity`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `lq`
+   --> crates/objeta-quantize/src/lib.rs:371:52
+    |
+371 |     let uniform_q4_bytes = plan.layers.iter().map(|lq| {
+    |                                                    ^^ help: if this is intentional, prefix it with an underscore: `_lq`
+
+warning: unused imports: `LayerStability` and `LayerZone`
+ --> crates/objeta-runtime/src/lib.rs:6:19
+  |
+6 | use objeta_core::{LayerZone, PhaseProfile, StabilityMap, LayerStability};
+  |                   ^^^^^^^^^                              ^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `c_char`
+ --> crates/objeta-qwen36-executor/src/attention.rs:6:20
+  |
+6 | use std::os::raw::{c_char, c_float, c_int};
+  |                    ^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unnecessary parentheses around block return value
+   --> crates/objeta-qwen36-executor/src/attention.rs:250:5
+    |
+250 |     (n_heads * head_dim)
+    |     ^                  ^
+    |
+    = note: `#[warn(unused_parens)]` (part of `#[warn(unused)]`) on by default
+help: remove these parentheses
+    |
+250 -     (n_heads * head_dim)
+250 +     n_heads * head_dim
+    |
+
+warning: unused import: `std::collections::HashMap`
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:1015:5
+     |
+1015 | use std::collections::HashMap;
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `PressureClass`
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:1739:41
+     |
+1739 |             GovernorMode, HardRiskKind, PressureClass, QualityRiskClass,
+     |                                         ^^^^^^^^^^^^^
+
+warning: unused import: `MoeExecutionResult`
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:2808:53
+     |
+2808 |             call_moe_pipeline, MoeExecutionBackend, MoeExecutionResult, SelectedExpert,
+     |                                                     ^^^^^^^^^^^^^^^^^^
+
+warning: unused variable: `w_qkv`
+  --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:56:5
+   |
+56 |     w_qkv: &[u16],
+   |     ^^^^^ help: if this is intentional, prefix it with an underscore: `_w_qkv`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `w_o`
+  --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:57:5
+   |
+57 |     w_o: &[u16],
+   |     ^^^ help: if this is intentional, prefix it with an underscore: `_w_o`
+
+warning: unused variable: `rows`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:364:36
+    |
+364 | pub fn l2_norm_rows(x: &mut [f32], rows: usize, dim: usize) {
+    |                                    ^^^^ help: if this is intentional, prefix it with an underscore: `_rows`
+
+warning: unused variable: `n_heads`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:406:5
+    |
+406 |     n_heads: usize,
+    |     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_n_heads`
+
+warning: unused variable: `w_ptr`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:902:5
+    |
+902 |     w_ptr: *const f32,
+    |     ^^^^^ help: if this is intentional, prefix it with an underscore: `_w_ptr`
+
+warning: unused variable: `w_sizes`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:903:5
+    |
+903 |     w_sizes: *const i32, // [size of each weight matrix] × N_MATS
+    |     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_w_sizes`
+
+warning: unused variable: `n_mats`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:904:5
+    |
+904 |     n_mats: i32,
+    |     ^^^^^^ help: if this is intentional, prefix it with an underscore: `_n_mats`
+
+warning: unused variable: `h`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:906:5
+    |
+906 |     h: *const f32,
+    |     ^ help: if this is intentional, prefix it with an underscore: `_h`
+
+warning: unused variable: `conv_state`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:908:5
+    |
+908 |     conv_state: *mut f32,
+    |     ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_conv_state`
+
+warning: unused variable: `conv_ptr`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:909:5
+    |
+909 |     conv_ptr: *mut i32,
+    |     ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_conv_ptr`
+
+warning: unused variable: `S_state`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:910:5
+    |
+910 |     S_state: *mut f32,
+    |     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_S_state`
+
+warning: unused variable: `k_cache`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:911:5
+    |
+911 |     k_cache: *mut f32,
+    |     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_k_cache`
+
+warning: unused variable: `v_cache`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:912:5
+    |
+912 |     v_cache: *mut f32,
+    |     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_v_cache`
+
+warning: unused variable: `rope_cos`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:913:5
+    |
+913 |     rope_cos: *const f32,
+    |     ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_rope_cos`
+
+warning: unused variable: `rope_sin`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:914:5
+    |
+914 |     rope_sin: *const f32,
+    |     ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_rope_sin`
+
+warning: unused variable: `pos`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:916:5
+    |
+916 |     pos: i32,
+    |     ^^^ help: if this is intentional, prefix it with an underscore: `_pos`
+
+warning: unused variable: `seq_len`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:917:5
+    |
+917 |     seq_len: i32,
+    |     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_seq_len`
+
+warning: unused variable: `max_seq`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:918:5
+    |
+918 |     max_seq: i32,
+    |     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_max_seq`
+
+warning: unused variable: `layer_type`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:919:5
+    |
+919 |     layer_type: i32, // 0=DeltaNet, 1=FullGQA, 2=NoAttn
+    |     ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_layer_type`
+
+warning: unused variable: `ao_out`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:921:5
+    |
+921 |     ao_out: *mut f32,
+    |     ^^^^^^ help: if this is intentional, prefix it with an underscore: `_ao_out`
+
+warning: unnecessary `unsafe` block
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:1463:9
+     |
+1463 |         unsafe {
+     |         ^^^^^^ unnecessary `unsafe` block
+     |
+     = note: `#[warn(unused_unsafe)]` (part of `#[warn(unused)]`) on by default
+
+warning: unnecessary `unsafe` block
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:1467:9
+     |
+1467 |         unsafe {
+     |         ^^^^^^ unnecessary `unsafe` block
+
+warning: variable does not need to be mutable
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:2043:13
+     |
+2043 |         let mut delta_count = 0usize;
+     |             ----^^^^^^^^^^^
+     |             |
+     |             help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:2044:13
+     |
+2044 |         let mut deltas_skipped = 0u32;
+     |             ----^^^^^^^^^^^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: unused variable: `stride`
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:2042:13
+     |
+2042 |         let stride = (1.0 / self.fusion_ratio.max(0.01)).round() as usize;
+     |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_stride`
+
+warning: unused variable: `delta_count`
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:2043:13
+     |
+2043 |         let mut delta_count = 0usize;
+     |             ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_delta_count`
+
+warning: unused variable: `deltas_skipped`
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:2044:13
+     |
+2044 |         let mut deltas_skipped = 0u32;
+     |             ^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_deltas_skipped`
+
+warning: unused variable: `selected_experts`
+    --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:1235:5
+     |
+1235 |     selected_experts: &[usize],
+     |     ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_selected_experts`
+
+warning: value assigned to `policy_select_wall` is never read
+    --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:1629:34
+     |
+1629 |     let mut policy_select_wall = 0.0;
+     |                                  ^^^
+     |
+     = help: maybe it is overwritten before being read?
+     = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `target_logit_ptr`
+   --> crates/objeta-qwen36-executor/src/speculative.rs:112:42
+    |
+112 |     pub fn prefill_token_done(&mut self, target_logit_ptr: *const c_float) {
+    |                                          ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_target_logit_ptr`
+
+warning: unused variable: `count`
+   --> crates/objeta-qwen36-executor/src/speculative.rs:238:13
+    |
+238 |         let count = if self.total_accepted == self.gamma {
+    |             ^^^^^ help: if this is intentional, prefix it with an underscore: `_count`
+
+warning: constant `N_KV` is never used
+ --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:9:7
+  |
+9 | const N_KV: usize = 2;
+  |       ^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `N_Q_ATTN` is never used
+  --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:10:7
+   |
+10 | const N_Q_ATTN: usize = 16; // Q heads for full GQA
+   |       ^^^^^^^^
+
+warning: function `gemv_f16_par` is never used
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:548:4
+    |
+548 | fn gemv_f16_par(W: &[u16], x: &[f32], M: usize, K: usize) -> Vec<f32> {
+    |    ^^^^^^^^^^^^
+
+warning: variant `Skip` is never constructed
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:935:5
+    |
+932 | enum AttnPolicy {
+    |      ---------- variant in this enum
+...
+935 |     Skip,     // No attention at all
+    |     ^^^^
+    |
+    = note: `AttnPolicy` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: field `precision_bits` is never read
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:949:5
+    |
+946 | struct LayerPolicy {
+    |        ----------- field in this struct
+...
+949 |     precision_bits: u8, // target precision for weights (3-16)
+    |     ^^^^^^^^^^^^^^
+    |
+    = note: `LayerPolicy` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: fields `qkv_M`, `qkv_K`, `o_M`, and `o_K` are never read
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:1042:5
+     |
+1020 | struct LayerWeights {
+     |        ------------ fields in this struct
+...
+1042 |     qkv_M: usize,
+     |     ^^^^^
+1043 |     qkv_K: usize,
+     |     ^^^^^
+1044 |     o_M: usize,
+     |     ^^^
+1045 |     o_K: usize,
+     |     ^^^
+
+warning: function `resident_cache_enabled` is never used
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:1051:4
+     |
+1051 | fn resident_cache_enabled(capacity: usize) -> bool {
+     |    ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: fields `moe_gate_buf`, `moe_up_buf`, `moe_hidden_buf`, and `moe_down_buf` are never read
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:1260:5
+     |
+1213 | pub struct Qwen36Runner {
+     |            ------------ fields in this struct
+...
+1260 |     moe_gate_buf: Vec<f32>, // 512
+     |     ^^^^^^^^^^^^
+1261 |     moe_up_buf: Vec<f32>,     // 512
+     |     ^^^^^^^^^^
+1262 |     moe_hidden_buf: Vec<f32>, // 512
+     |     ^^^^^^^^^^^^^^
+1263 |     moe_down_buf: Vec<f32>,   // 2048
+     |     ^^^^^^^^^^^^
+
+warning: method `compute_dequantized_expert_scratch_bytes` is never used
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:2791:8
+     |
+1310 | impl Qwen36Runner {
+     | ----------------- method in this implementation
+...
+2791 |     fn compute_dequantized_expert_scratch_bytes(&self) -> usize {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `lko_metal_gqa_load_weights` is never used
+  --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:18:8
+   |
+18 |     fn lko_metal_gqa_load_weights(
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `q4k_gemv` is never used
+  --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:80:4
+   |
+80 | fn q4k_gemv(q4_data: &[u8], M: usize, K: usize, x: &[f32]) -> Vec<f32> {
+   |    ^^^^^^^^
+
+warning: struct `SendPtr` is never constructed
+   --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:486:8
+    |
+486 | struct SendPtr(*const f32);
+    |        ^^^^^^^
+
+warning: function `moe_forward_layer` is never used
+   --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:564:4
+    |
+564 | fn moe_forward_layer(
+    |    ^^^^^^^^^^^^^^^^^
+
+warning: function `record_routing` is never used
+   --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:838:15
+    |
+838 | pub(crate) fn record_routing(layer_idx: usize, expert_ids: &[usize]) {
+    |               ^^^^^^^^^^^^^^
+
+warning: function `compute_cached_expert` is never used
+   --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:852:15
+    |
+852 | pub(crate) fn compute_cached_expert(
+    |               ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `get_cached_expert` is never used
+   --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:909:15
+    |
+909 | pub(crate) fn get_cached_expert(
+    |               ^^^^^^^^^^^^^^^^^
+
+warning: field `max_seq_len` is never read
+  --> crates/objeta-qwen36-executor/src/speculative.rs:45:5
+   |
+42 | pub struct SpecState {
+   |            --------- field in this struct
+...
+45 |     max_seq_len: u32,
+   |     ^^^^^^^^^^^
+   |
+   = note: `SpecState` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: variable `W` should have a snake case name
+  --> crates/objeta-qwen36-executor/src/attention.rs:32:14
+   |
+32 | pub fn sgemv(W: &[f32], x: &[f32], M: usize, K: usize) -> Vec<f32> {
+   |              ^ help: convert the identifier to snake case (notice the capitalization): `w`
+   |
+   = note: `#[warn(non_snake_case)]` (part of `#[warn(nonstandard_style)]`) on by default
+
+warning: variable `M` should have a snake case name
+  --> crates/objeta-qwen36-executor/src/attention.rs:32:36
+   |
+32 | pub fn sgemv(W: &[f32], x: &[f32], M: usize, K: usize) -> Vec<f32> {
+   |                                    ^ help: convert the identifier to snake case: `m`
+
+warning: variable `K` should have a snake case name
+  --> crates/objeta-qwen36-executor/src/attention.rs:32:46
+   |
+32 | pub fn sgemv(W: &[f32], x: &[f32], M: usize, K: usize) -> Vec<f32> {
+   |                                              ^ help: convert the identifier to snake case (notice the capitalization): `k`
+
+warning: variable `W_f16` should have a snake case name
+  --> crates/objeta-qwen36-executor/src/attention.rs:56:18
+   |
+56 | pub fn fp16_gemv(W_f16: &[u16], x: &[f32], M: usize, K: usize) -> Vec<f32> {
+   |                  ^^^^^ help: convert the identifier to snake case (notice the capitalization): `w_f16`
+
+warning: variable `M` should have a snake case name
+  --> crates/objeta-qwen36-executor/src/attention.rs:56:44
+   |
+56 | pub fn fp16_gemv(W_f16: &[u16], x: &[f32], M: usize, K: usize) -> Vec<f32> {
+   |                                            ^ help: convert the identifier to snake case: `m`
+
+warning: variable `K` should have a snake case name
+  --> crates/objeta-qwen36-executor/src/attention.rs:56:54
+   |
+56 | pub fn fp16_gemv(W_f16: &[u16], x: &[f32], M: usize, K: usize) -> Vec<f32> {
+   |                                                      ^ help: convert the identifier to snake case (notice the capitalization): `k`
+
+warning: variable `W_f32` should have a snake case name
+  --> crates/objeta-qwen36-executor/src/attention.rs:57:9
+   |
+57 |     let W_f32: Vec<f32> = W_f16.iter().map(|&h| f16_to_f32(h)).collect();
+   |         ^^^^^ help: convert the identifier to snake case (notice the capitalization): `w_f32`
+
+warning: variable `W` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/attention.rs:185:9
+    |
+185 |     let W = unsafe { std::slice::from_raw_parts(w, (m * k) as usize) };
+    |         ^ help: convert the identifier to snake case (notice the capitalization): `w`
+
+warning: variable `X` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/attention.rs:186:9
+    |
+186 |     let X = unsafe { std::slice::from_raw_parts(x, k as usize) };
+    |         ^ help: convert the identifier to snake case (notice the capitalization): `x`
+
+warning: variable `W` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/attention.rs:202:9
+    |
+202 |     let W = unsafe { std::slice::from_raw_parts(w, (m * k) as usize) };
+    |         ^ help: convert the identifier to snake case (notice the capitalization): `w`
+
+warning: variable `X` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/attention.rs:203:9
+    |
+203 |     let X = unsafe { std::slice::from_raw_parts(x, k as usize) };
+    |         ^ help: convert the identifier to snake case (notice the capitalization): `x`
+
+warning: variable `X` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/attention.rs:213:9
+    |
+213 |     let X = unsafe { std::slice::from_raw_parts(x, n as usize) };
+    |         ^ help: convert the identifier to snake case (notice the capitalization): `x`
+
+warning: variable `W` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/attention.rs:214:9
+    |
+214 |     let W = unsafe { std::slice::from_raw_parts(weight, n as usize) };
+    |         ^ help: convert the identifier to snake case (notice the capitalization): `w`
+
+warning: variable `X` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/attention.rs:255:9
+    |
+255 |     let X = unsafe { std::slice::from_raw_parts(x, n as usize) };
+    |         ^ help: convert the identifier to snake case (notice the capitalization): `x`
+
+warning: variable `W` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:128:37
+    |
+128 | pub fn fill_gemv_f32(y: &mut [f32], W: &[f32], x: &[f32], M: usize, K: usize) {
+    |                                     ^ help: convert the identifier to snake case (notice the capitalization): `w`
+
+warning: variable `M` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:128:59
+    |
+128 | pub fn fill_gemv_f32(y: &mut [f32], W: &[f32], x: &[f32], M: usize, K: usize) {
+    |                                                           ^ help: convert the identifier to snake case: `m`
+
+warning: variable `K` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:128:69
+    |
+128 | pub fn fill_gemv_f32(y: &mut [f32], W: &[f32], x: &[f32], M: usize, K: usize) {
+    |                                                                     ^ help: convert the identifier to snake case (notice the capitalization): `k`
+
+warning: variable `W` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:143:17
+    |
+143 | pub fn gemv_f32(W: &[f32], x: &[f32], M: usize, K: usize) -> Vec<f32> {
+    |                 ^ help: convert the identifier to snake case (notice the capitalization): `w`
+
+warning: variable `M` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:143:39
+    |
+143 | pub fn gemv_f32(W: &[f32], x: &[f32], M: usize, K: usize) -> Vec<f32> {
+    |                                       ^ help: convert the identifier to snake case: `m`
+
+warning: variable `K` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:143:49
+    |
+143 | pub fn gemv_f32(W: &[f32], x: &[f32], M: usize, K: usize) -> Vec<f32> {
+    |                                                 ^ help: convert the identifier to snake case (notice the capitalization): `k`
+
+warning: variable `W` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:165:24
+    |
+165 | pub fn gemv_f16_direct(W: &[u16], x: &[f32], M: usize, K: usize) -> Vec<f32> {
+    |                        ^ help: convert the identifier to snake case (notice the capitalization): `w`
+
+warning: variable `M` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:165:46
+    |
+165 | pub fn gemv_f16_direct(W: &[u16], x: &[f32], M: usize, K: usize) -> Vec<f32> {
+    |                                              ^ help: convert the identifier to snake case: `m`
+
+warning: variable `K` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:165:56
+    |
+165 | pub fn gemv_f16_direct(W: &[u16], x: &[f32], M: usize, K: usize) -> Vec<f32> {
+    |                                                        ^ help: convert the identifier to snake case (notice the capitalization): `k`
+
+warning: variable `W` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:187:21
+    |
+187 | pub fn gemv_f16_buf(W: &[u16], x: &[f32], M: usize, K: usize, _buf: &mut Vec<f32>) -> Vec<f32> {
+    |                     ^ help: convert the identifier to snake case (notice the capitalization): `w`
+
+warning: variable `M` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:187:43
+    |
+187 | pub fn gemv_f16_buf(W: &[u16], x: &[f32], M: usize, K: usize, _buf: &mut Vec<f32>) -> Vec<f32> {
+    |                                           ^ help: convert the identifier to snake case: `m`
+
+warning: variable `K` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:187:53
+    |
+187 | pub fn gemv_f16_buf(W: &[u16], x: &[f32], M: usize, K: usize, _buf: &mut Vec<f32>) -> Vec<f32> {
+    |                                                     ^ help: convert the identifier to snake case (notice the capitalization): `k`
+
+warning: variable `W` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:191:17
+    |
+191 | pub fn gemv_f16(W: &[u16], x: &[f32], M: usize, K: usize) -> Vec<f32> {
+    |                 ^ help: convert the identifier to snake case (notice the capitalization): `w`
+
+warning: variable `M` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:191:39
+    |
+191 | pub fn gemv_f16(W: &[u16], x: &[f32], M: usize, K: usize) -> Vec<f32> {
+    |                                       ^ help: convert the identifier to snake case: `m`
+
+warning: variable `K` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:191:49
+    |
+191 | pub fn gemv_f16(W: &[u16], x: &[f32], M: usize, K: usize) -> Vec<f32> {
+    |                                                 ^ help: convert the identifier to snake case (notice the capitalization): `k`
+
+warning: variable `W` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:290:9
+    |
+290 |     let W = unsafe { std::slice::from_raw_parts(w, (m * k) as usize) };
+    |         ^ help: convert the identifier to snake case (notice the capitalization): `w`
+
+warning: variable `X` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:291:9
+    |
+291 |     let X = unsafe { std::slice::from_raw_parts(x, k as usize) };
+    |         ^ help: convert the identifier to snake case (notice the capitalization): `x`
+
+warning: variable `W` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:306:9
+    |
+306 |     let W = unsafe { std::slice::from_raw_parts(w, (m * k) as usize) };
+    |         ^ help: convert the identifier to snake case (notice the capitalization): `w`
+
+warning: variable `X` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:307:9
+    |
+307 |     let X = unsafe { std::slice::from_raw_parts(x, k as usize) };
+    |         ^ help: convert the identifier to snake case (notice the capitalization): `x`
+
+warning: variable `X` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:316:9
+    |
+316 |     let X = unsafe { std::slice::from_raw_parts(x, n as usize) };
+    |         ^ help: convert the identifier to snake case (notice the capitalization): `x`
+
+warning: variable `W` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:317:9
+    |
+317 |     let W = unsafe { std::slice::from_raw_parts(weight, n as usize) };
+    |         ^ help: convert the identifier to snake case (notice the capitalization): `w`
+
+warning: variable `X` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:342:9
+    |
+342 |     let X = unsafe { std::slice::from_raw_parts_mut(x, n) };
+    |         ^ help: convert the identifier to snake case (notice the capitalization): `x`
+
+warning: variable `X` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:357:9
+    |
+357 |     let X = unsafe { std::slice::from_raw_parts_mut(x, n as usize) };
+    |         ^ help: convert the identifier to snake case (notice the capitalization): `x`
+
+warning: variable `X` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:377:9
+    |
+377 |     let X = unsafe { std::slice::from_raw_parts_mut(x, (rows * dim) as usize) };
+    |         ^ help: convert the identifier to snake case (notice the capitalization): `x`
+
+warning: variable `S` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:400:5
+    |
+400 |     S: &mut [f32],
+    |     ^ help: convert the identifier to snake case (notice the capitalization): `s`
+
+warning: variable `S_h` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:419:25
+    |
+419 |         .for_each(|(((((S_h, k_h), q_h), v_h), out_h), (&beta_h, &g_h))| {
+    |                         ^^^ help: convert the identifier to snake case (notice the capitalization): `s_h`
+
+warning: variable `S` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:456:5
+    |
+456 |     S: *mut f32,
+    |     ^ help: convert the identifier to snake case (notice the capitalization): `s`
+
+warning: variable `S_mut` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:470:9
+    |
+470 |     let S_mut = unsafe { std::slice::from_raw_parts_mut(S, nh * kd * vd) };
+    |         ^^^^^ help: convert the identifier to snake case (notice the capitalization): `s_mut`
+
+warning: variable `X` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:540:9
+    |
+540 |     let X = unsafe { std::slice::from_raw_parts_mut(x, n as usize) };
+    |         ^ help: convert the identifier to snake case (notice the capitalization): `x`
+
+warning: variable `W` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:548:17
+    |
+548 | fn gemv_f16_par(W: &[u16], x: &[f32], M: usize, K: usize) -> Vec<f32> {
+    |                 ^ help: convert the identifier to snake case (notice the capitalization): `w`
+
+warning: variable `M` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:548:39
+    |
+548 | fn gemv_f16_par(W: &[u16], x: &[f32], M: usize, K: usize) -> Vec<f32> {
+    |                                       ^ help: convert the identifier to snake case: `m`
+
+warning: variable `K` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:548:49
+    |
+548 | fn gemv_f16_par(W: &[u16], x: &[f32], M: usize, K: usize) -> Vec<f32> {
+    |                                                 ^ help: convert the identifier to snake case (notice the capitalization): `k`
+
+warning: variable `K` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:600:9
+    |
+600 |     let K = h.len();
+    |         ^ help: convert the identifier to snake case (notice the capitalization): `k`
+
+warning: variable `S_state` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:771:5
+    |
+771 |     S_state: &mut [f32],
+    |     ^^^^^^^ help: convert the identifier to snake case (notice the capitalization): `s_state`
+
+warning: variable `S_state` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:910:5
+    |
+910 |     S_state: *mut f32,
+    |     ^^^^^^^ help: convert the identifier to snake case (notice the capitalization): `s_state`
+
+warning: structure field `qkv_M` should have a snake case name
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:1042:5
+     |
+1042 |     qkv_M: usize,
+     |     ^^^^^ help: convert the identifier to snake case: `qkv_m`
+
+warning: structure field `qkv_K` should have a snake case name
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:1043:5
+     |
+1043 |     qkv_K: usize,
+     |     ^^^^^ help: convert the identifier to snake case (notice the capitalization): `qkv_k`
+
+warning: structure field `o_M` should have a snake case name
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:1044:5
+     |
+1044 |     o_M: usize,
+     |     ^^^ help: convert the identifier to snake case: `o_m`
+
+warning: structure field `o_K` should have a snake case name
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:1045:5
+     |
+1045 |     o_K: usize,
+     |     ^^^ help: convert the identifier to snake case (notice the capitalization): `o_k`
+
+warning: structure field `S_states` should have a snake case name
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:1224:5
+     |
+1224 |     S_states: Vec<Vec<f32>>, // per layer: (32 × 128 × 128)
+     |     ^^^^^^^^ help: convert the identifier to snake case (notice the capitalization): `s_states`
+
+warning: variable `S_states` should have a snake case name
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:1425:13
+     |
+1425 |         let S_states: Vec<_> = (0..40)
+     |             ^^^^^^^^ help: convert the identifier to snake case (notice the capitalization): `s_states`
+
+warning: creating a shared reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:2065:40
+     |
+2065 |                         let trackers = crate::moe_dispatch::GLOBAL_FREQ.as_ref();
+     |                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+     = note: `#[warn(static_mut_refs)]` (part of `#[warn(rust_2024_compatibility)]`) on by default
+
+warning: variable `qM` should have a snake case name
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:3161:13
+     |
+3161 |         let qM = qw.len() / HDIM;
+     |             ^^ help: convert the identifier to snake case: `q_m`
+
+warning: variable `kM` should have a snake case name
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:3162:13
+     |
+3162 |         let kM = kw.len() / HDIM;
+     |             ^^ help: convert the identifier to snake case: `k_m`
+
+warning: variable `vM` should have a snake case name
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:3163:13
+     |
+3163 |         let vM = vw.len() / HDIM;
+     |             ^^ help: convert the identifier to snake case: `v_m`
+
+warning: variable `M` should have a snake case name
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:3171:13
+     |
+3171 |         let M = w.len() / HDIM;
+     |             ^ help: convert the identifier to snake case: `m`
+
+warning: variable `qkv_M` should have a snake case name
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:3157:17
+     |
+3157 |     let (w_qkv, qkv_M, qkv_K) = if is_gqa {
+     |                 ^^^^^ help: convert the identifier to snake case: `qkv_m`
+
+warning: variable `qkv_K` should have a snake case name
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:3157:24
+     |
+3157 |     let (w_qkv, qkv_M, qkv_K) = if is_gqa {
+     |                        ^^^^^ help: convert the identifier to snake case (notice the capitalization): `qkv_k`
+
+warning: variable `M` should have a snake case name
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:3179:13
+     |
+3179 |         let M = w.len() / (16 * 256);
+     |             ^ help: convert the identifier to snake case: `m`
+
+warning: variable `M` should have a snake case name
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:3183:13
+     |
+3183 |         let M = HDIM;
+     |             ^ help: convert the identifier to snake case: `m`
+
+warning: variable `K` should have a snake case name
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:3184:13
+     |
+3184 |         let K = w.len() / HDIM;
+     |             ^ help: convert the identifier to snake case (notice the capitalization): `k`
+
+warning: variable `o_M` should have a snake case name
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:3177:15
+     |
+3177 |     let (w_o, o_M, o_K) = if is_gqa {
+     |               ^^^ help: convert the identifier to snake case: `o_m`
+
+warning: variable `o_K` should have a snake case name
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:3177:20
+     |
+3177 |     let (w_o, o_M, o_K) = if is_gqa {
+     |                    ^^^ help: convert the identifier to snake case (notice the capitalization): `o_k`
+
+warning: creating a mutable reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:3602:15
+     |
+3602 |         match &mut RUNNER {
+     |               ^^^^^^^^^^^ mutable reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+help: use `&raw mut` instead to create a raw pointer
+     |
+3602 |         match &raw mut RUNNER {
+     |                +++
+
+warning: creating a mutable reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:3640:26
+     |
+3640 |         if let Some(r) = RUNNER.as_mut() {
+     |                          ^^^^^^^^^^^^^^^ mutable reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+
+warning: creating a mutable reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:3682:27
+     |
+3682 |     let runner = unsafe { RUNNER.as_mut() };
+     |                           ^^^^^^^^^^^^^^^ mutable reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+
+warning: creating a mutable reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:3740:15
+     |
+3740 |         match &mut RUNNER {
+     |               ^^^^^^^^^^^ mutable reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+help: use `&raw mut` instead to create a raw pointer
+     |
+3740 |         match &raw mut RUNNER {
+     |                +++
+
+warning: creating a mutable reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:3756:27
+     |
+3756 |     let runner = unsafe { RUNNER.as_mut() }.expect("runner not initialized");
+     |                           ^^^^^^^^^^^^^^^ mutable reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+
+warning: creating a mutable reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:3764:27
+     |
+3764 |     let runner = unsafe { RUNNER.as_mut() }.expect("runner not initialized");
+     |                           ^^^^^^^^^^^^^^^ mutable reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+
+warning: creating a mutable reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:3773:15
+     |
+3773 |         match &mut RUNNER {
+     |               ^^^^^^^^^^^ mutable reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+help: use `&raw mut` instead to create a raw pointer
+     |
+3773 |         match &raw mut RUNNER {
+     |                +++
+
+warning: creating a mutable reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:3793:27
+     |
+3793 |     let runner = unsafe { RUNNER.as_mut() }.expect("runner not initialized");
+     |                           ^^^^^^^^^^^^^^^ mutable reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+
+warning: creating a mutable reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:3810:27
+     |
+3810 |     let runner = unsafe { RUNNER.as_mut() }.expect("runner not initialized");
+     |                           ^^^^^^^^^^^^^^^ mutable reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+
+warning: creating a mutable reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:3970:27
+     |
+3970 |     let runner = unsafe { RUNNER.as_mut() }.expect("runner not initialized");
+     |                           ^^^^^^^^^^^^^^^ mutable reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+
+warning: creating a mutable reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:3990:27
+     |
+3990 |     let runner = unsafe { RUNNER.as_mut() }.expect("runner not initialized");
+     |                           ^^^^^^^^^^^^^^^ mutable reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+
+warning: creating a mutable reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:4010:27
+     |
+4010 |     let runner = unsafe { RUNNER.as_mut() }.expect("runner not initialized");
+     |                           ^^^^^^^^^^^^^^^ mutable reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+
+warning: creating a mutable reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:4043:27
+     |
+4043 |     let runner = unsafe { RUNNER.as_mut() }.expect("runner not initialized");
+     |                           ^^^^^^^^^^^^^^^ mutable reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+
+warning: creating a mutable reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:4069:15
+     |
+4069 |         match &mut RUNNER {
+     |               ^^^^^^^^^^^ mutable reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+help: use `&raw mut` instead to create a raw pointer
+     |
+4069 |         match &raw mut RUNNER {
+     |                +++
+
+warning: creating a mutable reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:4089:27
+     |
+4089 |     let runner = unsafe { RUNNER.as_mut() }.expect("runner not initialized");
+     |                           ^^^^^^^^^^^^^^^ mutable reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+
+warning: creating a mutable reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:4276:27
+     |
+4276 |     let runner = unsafe { RUNNER.as_mut() }.expect("runner not initialized");
+     |                           ^^^^^^^^^^^^^^^ mutable reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+
+warning: creating a mutable reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:4458:26
+     |
+4458 |         if let Some(r) = RUNNER.as_mut() {
+     |                          ^^^^^^^^^^^^^^^ mutable reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+
+warning: creating a mutable reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:4470:26
+     |
+4470 |         if let Some(r) = RUNNER.as_mut() {
+     |                          ^^^^^^^^^^^^^^^ mutable reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+
+warning: creating a mutable reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:4482:26
+     |
+4482 |         if let Some(r) = RUNNER.as_mut() {
+     |                          ^^^^^^^^^^^^^^^ mutable reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+
+warning: creating a mutable reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:4503:26
+     |
+4503 |         if let Some(r) = RUNNER.as_mut() {
+     |                          ^^^^^^^^^^^^^^^ mutable reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+
+warning: creating a mutable reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:4538:26
+     |
+4538 |         if let Some(r) = RUNNER.as_mut() {
+     |                          ^^^^^^^^^^^^^^^ mutable reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+
+warning: creating a mutable reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:4557:26
+     |
+4557 |         if let Some(r) = RUNNER.as_mut() {
+     |                          ^^^^^^^^^^^^^^^ mutable reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+
+warning: creating a mutable reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:4584:26
+     |
+4584 |         if let Some(r) = RUNNER.as_mut() {
+     |                          ^^^^^^^^^^^^^^^ mutable reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+
+warning: creating a mutable reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:4604:26
+     |
+4604 |         if let Some(r) = RUNNER.as_mut() {
+     |                          ^^^^^^^^^^^^^^^ mutable reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+
+warning: creating a mutable reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:4663:26
+     |
+4663 |         if let Some(r) = RUNNER.as_mut() {
+     |                          ^^^^^^^^^^^^^^^ mutable reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+
+warning: creating a mutable reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:4722:26
+     |
+4722 |         if let Some(r) = RUNNER.as_mut() {
+     |                          ^^^^^^^^^^^^^^^ mutable reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+
+warning: creating a mutable reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:4750:26
+     |
+4750 |         if let Some(r) = RUNNER.as_mut() {
+     |                          ^^^^^^^^^^^^^^^ mutable reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+
+warning: creating a shared reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:4778:15
+     |
+4778 |         match &RUNNER {
+     |               ^^^^^^^ shared reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+help: use `&raw const` instead to create a raw pointer
+     |
+4778 |         match &raw const RUNNER {
+     |                +++++++++
+
+warning: creating a mutable reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:5223:15
+     |
+5223 |         match &mut RUNNER {
+     |               ^^^^^^^^^^^ mutable reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+help: use `&raw mut` instead to create a raw pointer
+     |
+5223 |         match &raw mut RUNNER {
+     |                +++
+
+warning: creating a mutable reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:5247:27
+     |
+5247 |     let runner = unsafe { RUNNER.as_mut() }.expect("runner not initialized");
+     |                           ^^^^^^^^^^^^^^^ mutable reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+
+warning: creating a mutable reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:5316:27
+     |
+5316 |     let runner = unsafe { RUNNER.as_mut() }.expect("runner not initialized");
+     |                           ^^^^^^^^^^^^^^^ mutable reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+
+warning: creating a mutable reference to mutable static
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:5355:27
+     |
+5355 |     let runner = unsafe { RUNNER.as_mut() }.expect("runner not initialized");
+     |                           ^^^^^^^^^^^^^^^ mutable reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+
+warning: variable `M` should have a snake case name
+  --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:80:29
+   |
+80 | fn q4k_gemv(q4_data: &[u8], M: usize, K: usize, x: &[f32]) -> Vec<f32> {
+   |                             ^ help: convert the identifier to snake case: `m`
+
+warning: variable `K` should have a snake case name
+  --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:80:39
+   |
+80 | fn q4k_gemv(q4_data: &[u8], M: usize, K: usize, x: &[f32]) -> Vec<f32> {
+   |                                       ^ help: convert the identifier to snake case (notice the capitalization): `k`
+
+warning: variable `L` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:108:21
+    |
+108 |             let mut L = [0u8; QK_K];
+    |                     ^ help: convert the identifier to snake case: `l`
+
+warning: variable `K` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:142:31
+    |
+142 | fn q4k_dot_row(q4_row: &[u8], K: usize, x: &[f32]) -> f32 {
+    |                               ^ help: convert the identifier to snake case (notice the capitalization): `k`
+
+warning: variable `L` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:163:17
+    |
+163 |         let mut L = [0u8; QK_K];
+    |                 ^ help: convert the identifier to snake case: `l`
+
+warning: creating a shared reference to mutable static
+   --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:576:46
+    |
+576 |         if let Some(ref trackers) = unsafe { GLOBAL_FREQ.as_ref() } {
+    |                                              ^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+    = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+
+warning: creating a shared reference to mutable static
+   --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:589:31
+    |
+589 |         let caches = unsafe { CACHED_EXPERTS.as_ref() };
+    |                               ^^^^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+    = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+
+warning: variable `M` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:781:40
+    |
+781 | fn q4k_dequantize_only(q4_data: &[u8], M: usize, K: usize) -> Vec<f32> {
+    |                                        ^ help: convert the identifier to snake case: `m`
+
+warning: variable `K` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:781:50
+    |
+781 | fn q4k_dequantize_only(q4_data: &[u8], M: usize, K: usize) -> Vec<f32> {
+    |                                                  ^ help: convert the identifier to snake case (notice the capitalization): `k`
+
+warning: variable `L` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:804:21
+    |
+804 |             let mut L = [0u8; QK_K];
+    |                     ^ help: convert the identifier to snake case: `l`
+
+warning: creating a shared reference to mutable static
+   --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:839:29
+    |
+839 |     let trackers = unsafe { GLOBAL_FREQ.as_ref() };
+    |                             ^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+    = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+
+warning: creating a shared reference to mutable static
+   --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:859:27
+    |
+859 |     let caches = unsafe { CACHED_EXPERTS.as_ref()? };
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+    = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+
+warning: creating a shared reference to mutable static
+   --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:913:27
+    |
+913 |     let caches = unsafe { CACHED_EXPERTS.as_ref()? };
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+    = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+
+warning: creating a shared reference to mutable static
+   --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:949:24
+    |
+949 |         let trackers = GLOBAL_FREQ.as_ref();
+    |                        ^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+    = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+
+warning: creating a shared reference to mutable static
+   --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:982:27
+    |
+982 |     let caches = unsafe { CACHED_EXPERTS.as_ref().unwrap() };
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+    = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+
+warning: creating a shared reference to mutable static
+    --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:1019:27
+     |
+1019 |     let caches = unsafe { CACHED_EXPERTS.as_ref() };
+     |                           ^^^^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+
+warning: creating a shared reference to mutable static
+    --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:1029:27
+     |
+1029 |     let caches = unsafe { CACHED_EXPERTS.as_ref() };
+     |                           ^^^^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+
+warning: variable `M` should have a snake case name
+    --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:1038:35
+     |
+1038 | fn f32_gemv(w: &[f32], x: &[f32], M: usize, K: usize) -> Vec<f32> {
+     |                                   ^ help: convert the identifier to snake case: `m`
+
+warning: variable `K` should have a snake case name
+    --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:1038:45
+     |
+1038 | fn f32_gemv(w: &[f32], x: &[f32], M: usize, K: usize) -> Vec<f32> {
+     |                                             ^ help: convert the identifier to snake case (notice the capitalization): `k`
+
+warning: creating a shared reference to mutable static
+    --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:1107:29
+     |
+1107 |     let trackers = unsafe { GLOBAL_FREQ.as_ref() };
+     |                             ^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+
+warning: creating a shared reference to mutable static
+    --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:1834:42
+     |
+1834 |     if let Some(ref trackers) = unsafe { GLOBAL_FREQ.as_ref() } {
+     |                                          ^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+     = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+
+warning: variable `L` should have a snake case name
+  --> crates/objeta-qwen36-executor/src/quantize.rs:80:13
+   |
+80 |     let mut L = [0u8; QK_K];
+   |             ^ help: convert the identifier to snake case: `l`
+
+warning: variable `L` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/quantize.rs:134:13
+    |
+134 |     let mut L = [0u8; QK_K];
+    |             ^ help: convert the identifier to snake case: `l`
+
+warning: variable `L` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/quantize.rs:249:13
+    |
+249 |     let mut L = [0u8; QK_K];
+    |             ^ help: convert the identifier to snake case: `l`
+
+warning: variable `L` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/quantize.rs:288:13
+    |
+288 |     let mut L = [0u8; QK_K];
+    |             ^ help: convert the identifier to snake case: `l`
+
+warning: variable `L` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/quantize.rs:570:13
+    |
+570 |     let mut L = [0u8; QK_K]; // 0..3 values
+    |             ^ help: convert the identifier to snake case: `l`
+
+warning: variable `L` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/quantize.rs:623:13
+    |
+623 |     let mut L = [0u8; QK_K];
+    |             ^ help: convert the identifier to snake case: `l`
+
+warning: variable `L` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/quantize.rs:651:13
+    |
+651 |     let mut L = [0u8; QK_K]; // 0..7 values
+    |             ^ help: convert the identifier to snake case: `l`
+
+warning: variable `L` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/quantize.rs:715:13
+    |
+715 |     let mut L = [0u8; QK_K];
+    |             ^ help: convert the identifier to snake case: `l`
+
+warning: `objeta-quantize` (lib) generated 3 warnings (run `cargo fix --lib -p objeta-quantize` to apply 3 suggestions)
+warning: `objeta-runtime` (lib) generated 1 warning (run `cargo fix --lib -p objeta-runtime` to apply 1 suggestion)
+warning: `objeta-qwen36-executor` (lib) generated 181 warnings (run `cargo fix --lib -p objeta-qwen36-executor` to apply 33 suggestions)
+warning: variable does not need to be mutable
+   --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:380:13
+    |
+380 |         let mut q4_data = vec![0u8; M * Q4K_BLOCK_BYTES];
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:383:17
+    |
+383 |             let mut dst = [0u8; Q4K_BLOCK_BYTES];
+    |                 ----^^^
+    |                 |
+    |                 help: remove this `mut`
+
+warning: unused variable: `q4_data`
+   --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:380:13
+    |
+380 |         let mut q4_data = vec![0u8; M * Q4K_BLOCK_BYTES];
+    |             ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_q4_data`
+
+warning: unused variable: `src`
+   --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:382:17
+    |
+382 |             let src: [f32; QK_K] = w[row * K..(row + 1) * K].try_into().unwrap();
+    |                 ^^^ help: if this is intentional, prefix it with an underscore: `_src`
+
+warning: unused variable: `dst`
+   --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:383:17
+    |
+383 |             let mut dst = [0u8; Q4K_BLOCK_BYTES];
+    |                 ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_dst`
+
+warning: variable does not need to be mutable
+   --> crates/objeta-qwen36-executor/src/speculative.rs:583:13
+    |
+583 |         let mut tlogits = vec![0.0f32; 3 * vocab];
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: function `make_arena` is never used
+   --> crates/objeta-qwen36-executor/src/kv_arena.rs:646:8
+    |
+646 |     fn make_arena() -> KVArena {
+    |        ^^^^^^^^^^
+
+warning: variable `M` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:356:13
+    |
+356 |         let M = 16;
+    |             ^ help: convert the identifier to snake case: `m`
+
+warning: variable `K` should have a snake case name
+   --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:357:13
+    |
+357 |         let K = 256;
+    |             ^ help: convert the identifier to snake case (notice the capitalization): `k`
+
+warning: `objeta-qwen36-executor` (lib test) generated 190 warnings (181 duplicates) (run `cargo fix --lib -p objeta-qwen36-executor --tests` to apply 6 suggestions)
+warning: unused import: `rand::Rng`
+  --> experiments/src/verify_rotation.rs:11:5
+   |
+11 | use rand::Rng;
+   |     ^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> experiments/src/verify_rotation.rs:160:25
+    |
+160 |                     let mut s = 0.0;
+    |                         ----^
+    |                         |
+    |                         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `s`
+   --> experiments/src/verify_rotation.rs:160:25
+    |
+160 |                     let mut s = 0.0;
+    |                         ^^^^^ help: if this is intentional, prefix it with an underscore: `_s`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `ki`
+   --> experiments/src/verify_rotation.rs:161:25
+    |
+161 |                     for ki in 0..k { /* computed below */ }
+    |                         ^^ help: if this is intentional, prefix it with an underscore: `_ki`
+
+warning: unused variable: `j`
+   --> experiments/src/verify_rotation.rs:194:18
+    |
+194 |             for (j, (x, delta)) in inputs.iter().zip(deltas.iter()).enumerate() {
+    |                  ^ help: if this is intentional, prefix it with an underscore: `_j`
+
+warning: `objeta-experiments` (bin "verify_rotation" test) generated 5 warnings (run `cargo fix --bin "verify_rotation" -p objeta-experiments --tests` to apply 4 suggestions)
+warning: unused imports: `LayerStability` and `StabilityMap`
+   --> crates/objeta-quantize/src/lib.rs:957:31
+    |
+957 |         Family, LayerProfile, LayerStability, LayerZone, Phase, PhaseProfile, StabilityMap,
+    |                               ^^^^^^^^^^^^^^                                  ^^^^^^^^^^^^
+
+warning: `objeta-moe` (lib test) generated 3 warnings (3 duplicates)
+warning: `objeta-analysis` (lib test) generated 3 warnings (3 duplicates)
+warning: `objeta-quantize` (lib test) generated 4 warnings (3 duplicates) (run `cargo fix --lib -p objeta-quantize --tests` to apply 1 suggestion)
+warning: `objeta-runtime` (lib test) generated 1 warning (1 duplicate)
+   Compiling objeta-phase v0.1.0 (/Users/yasuno/projects/objeta/crates/objeta-phase)
+warning: `objeta-parser` (lib test) generated 1 warning (1 duplicate)
+warning: `objeta-routing` (lib test) generated 1 warning (1 duplicate)
+warning: unused import: `LayerZone`
+   --> crates/objeta-phase/src/lib.rs:146:37
+    |
+146 |     use objeta_core::{LayerProfile, LayerZone};
+    |                                     ^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+error[E0063]: missing field `lyapunov_estimate` in initializer of `LayerProfile`
+   --> crates/objeta-phase/src/lib.rs:149:9
+    |
+149 |         LayerProfile {
+    |         ^^^^^^^^^^^^ missing `lyapunov_estimate`
+
+For more information about this error, try `rustc --explain E0063`.
+warning: `objeta-phase` (lib test) generated 1 warning
+error: could not compile `objeta-phase` (lib test) due to 1 previous error; 1 warning emitted

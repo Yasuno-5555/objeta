@@ -1,0 +1,562 @@
+    Checking objeta-qwen36-executor v0.1.0 (/Users/yasuno/projects/objeta/crates/objeta-qwen36-executor)
+error[E0583]: file not found for module `qwen36_ffi`
+  --> crates/objeta-qwen36-executor/src/lib.rs:18:1
+   |
+18 | pub mod qwen36_ffi;
+   | ^^^^^^^^^^^^^^^^^^^
+   |
+   = help: to create the module `qwen36_ffi`, create file "crates/objeta-qwen36-executor/src/qwen36_ffi.rs" or "crates/objeta-qwen36-executor/src/qwen36_ffi/mod.rs"
+   = note: if there is a `mod qwen36_ffi` elsewhere in the crate already, import it with `use crate::...` instead
+
+error[E0603]: constant `EXPERT_TOTAL_BYTES` is private
+    --> crates/objeta-qwen36-executor/src/runner_residency.rs:1:64
+     |
+   1 | use crate::qwen36_forward::{Qwen36Runner, RuntimeConfigSource, EXPERT_TOTAL_BYTES};
+     |                                                                ^^^^^^^^^^^^^^^^^^ private constant
+     |
+note: the constant `EXPERT_TOTAL_BYTES` is defined here
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:3588:1
+     |
+3588 | const EXPERT_TOTAL_BYTES: u64 = EXPERT_GATE_UP_BYTES + EXPERT_DOWN_BYTES;
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `c_char`
+ --> crates/objeta-qwen36-executor/src/attention.rs:6:20
+  |
+6 | use std::os::raw::{c_char, c_float, c_int};
+  |                    ^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unnecessary parentheses around block return value
+   --> crates/objeta-qwen36-executor/src/attention.rs:250:5
+    |
+250 |     (n_heads * head_dim)
+    |     ^                  ^
+    |
+    = note: `#[warn(unused_parens)]` (part of `#[warn(unused)]`) on by default
+help: remove these parentheses
+    |
+250 -     (n_heads * head_dim)
+250 +     n_heads * head_dim
+    |
+
+warning: unused import: `std::collections::HashMap`
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:1015:5
+     |
+1015 | use std::collections::HashMap;
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `PressureClass`
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:1739:41
+     |
+1739 |             GovernorMode, HardRiskKind, PressureClass, QualityRiskClass,
+     |                                         ^^^^^^^^^^^^^
+
+warning: unused import: `MoeExecutionResult`
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:2808:53
+     |
+2808 |             call_moe_pipeline, MoeExecutionBackend, MoeExecutionResult, SelectedExpert,
+     |                                                     ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `PressureClass`
+  --> crates/objeta-qwen36-executor/src/runner_governor.rs:53:41
+   |
+53 |             GovernorMode, HardRiskKind, PressureClass, QualityRiskClass,
+   |                                         ^^^^^^^^^^^^^
+
+error[E0592]: duplicate definitions with name `load_runtime_pack`
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:1637:5
+     |
+1637 |     pub fn load_runtime_pack(&mut self, path: &Path) -> std::io::Result<()> {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ duplicate definitions for `load_runtime_pack`
+     |
+    ::: crates/objeta-qwen36-executor/src/runtime_pack.rs:320:5
+     |
+ 320 |     pub fn load_runtime_pack(&mut self, path: &Path) -> std::io::Result<()> {
+     |     ----------------------------------------------------------------------- other definition for `load_runtime_pack`
+
+error[E0592]: duplicate definitions with name `governor_min_resident_cache_bytes`
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:1690:5
+     |
+1690 |     fn governor_min_resident_cache_bytes(&self) -> u64 {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ duplicate definitions for `governor_min_resident_cache_bytes`
+     |
+    ::: crates/objeta-qwen36-executor/src/runner_governor.rs:4:5
+     |
+   4 |     pub(crate) fn governor_min_resident_cache_bytes(&self) -> u64 {
+     |     ------------------------------------------------------------- other definition for `governor_min_resident_cache_bytes`
+
+error[E0592]: duplicate definitions with name `disable_group_preresolve_for_governor`
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:1705:5
+     |
+1705 | /     fn disable_group_preresolve_for_governor(
+1706 | |         &mut self,
+1707 | |         decision: &mut crate::runtime_governor::GovernorDecision,
+1708 | |     ) {
+     | |_____^ duplicate definitions for `disable_group_preresolve_for_governor`
+     |
+    ::: crates/objeta-qwen36-executor/src/runner_governor.rs:19:5
+     |
+  19 | /     pub(crate) fn disable_group_preresolve_for_governor(
+  20 | |         &mut self,
+  21 | |         decision: &mut crate::runtime_governor::GovernorDecision,
+  22 | |     ) {
+     | |_____- other definition for `disable_group_preresolve_for_governor`
+
+error[E0592]: duplicate definitions with name `apply_governor_decision_at_token_boundary`
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:1733:5
+     |
+1733 | /     fn apply_governor_decision_at_token_boundary(
+1734 | |         &mut self,
+1735 | |         observation: &crate::runtime_governor::RuntimeObservation,
+1736 | |         decision: &mut crate::runtime_governor::GovernorDecision,
+1737 | |     ) {
+     | |_____^ duplicate definitions for `apply_governor_decision_at_token_boundary`
+     |
+    ::: crates/objeta-qwen36-executor/src/runner_governor.rs:47:5
+     |
+  47 | /     pub(crate) fn apply_governor_decision_at_token_boundary(
+  48 | |         &mut self,
+  49 | |         observation: &crate::runtime_governor::RuntimeObservation,
+  50 | |         decision: &mut crate::runtime_governor::GovernorDecision,
+  51 | |     ) {
+     | |_____- other definition for `apply_governor_decision_at_token_boundary`
+
+error[E0592]: duplicate definitions with name `begin_token_residency`
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:3561:5
+     |
+3561 |     pub fn begin_token_residency(&mut self, token_id: usize) {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ duplicate definitions for `begin_token_residency`
+     |
+    ::: crates/objeta-qwen36-executor/src/runner_residency.rs:4:5
+     |
+   4 |     pub fn begin_token_residency(&mut self, token_id: usize) {
+     |     -------------------------------------------------------- other definition for `begin_token_residency`
+
+error[E0034]: multiple applicable items in scope
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:1563:32
+     |
+1563 |                 let _ = runner.load_runtime_pack(Path::new(pack_path.trim()));
+     |                                ^^^^^^^^^^^^^^^^^ multiple `load_runtime_pack` found
+     |
+note: candidate #1 is defined in an impl for the type `Qwen36Runner`
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:1637:5
+     |
+1637 |     pub fn load_runtime_pack(&mut self, path: &Path) -> std::io::Result<()> {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: candidate #2 is defined in an impl for the type `Qwen36Runner`
+    --> crates/objeta-qwen36-executor/src/runtime_pack.rs:320:5
+     |
+ 320 |     pub fn load_runtime_pack(&mut self, path: &Path) -> std::io::Result<()> {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0034]: multiple applicable items in scope
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:1799:18
+     |
+1799 |             self.disable_group_preresolve_for_governor(decision);
+     |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ multiple `disable_group_preresolve_for_governor` found
+     |
+note: candidate #1 is defined in an impl for the type `Qwen36Runner`
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:1705:5
+     |
+1705 | /     fn disable_group_preresolve_for_governor(
+1706 | |         &mut self,
+1707 | |         decision: &mut crate::runtime_governor::GovernorDecision,
+1708 | |     ) {
+     | |_____^
+note: candidate #2 is defined in an impl for the type `Qwen36Runner`
+    --> crates/objeta-qwen36-executor/src/runner_governor.rs:19:5
+     |
+  19 | /     pub(crate) fn disable_group_preresolve_for_governor(
+  20 | |         &mut self,
+  21 | |         decision: &mut crate::runtime_governor::GovernorDecision,
+  22 | |     ) {
+     | |_____^
+
+error[E0034]: multiple applicable items in scope
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:1847:18
+     |
+1847 |             self.disable_group_preresolve_for_governor(decision);
+     |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ multiple `disable_group_preresolve_for_governor` found
+     |
+note: candidate #1 is defined in an impl for the type `Qwen36Runner`
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:1705:5
+     |
+1705 | /     fn disable_group_preresolve_for_governor(
+1706 | |         &mut self,
+1707 | |         decision: &mut crate::runtime_governor::GovernorDecision,
+1708 | |     ) {
+     | |_____^
+note: candidate #2 is defined in an impl for the type `Qwen36Runner`
+    --> crates/objeta-qwen36-executor/src/runner_governor.rs:19:5
+     |
+  19 | /     pub(crate) fn disable_group_preresolve_for_governor(
+  20 | |         &mut self,
+  21 | |         decision: &mut crate::runtime_governor::GovernorDecision,
+  22 | |     ) {
+     | |_____^
+
+error[E0034]: multiple applicable items in scope
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:1849:36
+     |
+1849 |             let lower_bound = self.governor_min_resident_cache_bytes();
+     |                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ multiple `governor_min_resident_cache_bytes` found
+     |
+note: candidate #1 is defined in an impl for the type `Qwen36Runner`
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:1690:5
+     |
+1690 |     fn governor_min_resident_cache_bytes(&self) -> u64 {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: candidate #2 is defined in an impl for the type `Qwen36Runner`
+    --> crates/objeta-qwen36-executor/src/runner_governor.rs:4:5
+     |
+   4 |     pub(crate) fn governor_min_resident_cache_bytes(&self) -> u64 {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0034]: multiple applicable items in scope
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:3535:22
+     |
+3535 |                 self.apply_governor_decision_at_token_boundary(&observation, &mut decision);
+     |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ multiple `apply_governor_decision_at_token_boundary` found
+     |
+note: candidate #1 is defined in an impl for the type `Qwen36Runner`
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:1733:5
+     |
+1733 | /     fn apply_governor_decision_at_token_boundary(
+1734 | |         &mut self,
+1735 | |         observation: &crate::runtime_governor::RuntimeObservation,
+1736 | |         decision: &mut crate::runtime_governor::GovernorDecision,
+1737 | |     ) {
+     | |_____^
+note: candidate #2 is defined in an impl for the type `Qwen36Runner`
+    --> crates/objeta-qwen36-executor/src/runner_governor.rs:47:5
+     |
+  47 | /     pub(crate) fn apply_governor_decision_at_token_boundary(
+  48 | |         &mut self,
+  49 | |         observation: &crate::runtime_governor::RuntimeObservation,
+  50 | |         decision: &mut crate::runtime_governor::GovernorDecision,
+  51 | |     ) {
+     | |_____^
+
+error[E0034]: multiple applicable items in scope
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:3712:28
+     |
+3712 |         Ok(path) => runner.load_runtime_pack(Path::new(path)).map(|_| 1).unwrap_or(0),
+     |                            ^^^^^^^^^^^^^^^^^ multiple `load_runtime_pack` found
+     |
+note: candidate #1 is defined in an impl for the type `Qwen36Runner`
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:1637:5
+     |
+1637 |     pub fn load_runtime_pack(&mut self, path: &Path) -> std::io::Result<()> {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: candidate #2 is defined in an impl for the type `Qwen36Runner`
+    --> crates/objeta-qwen36-executor/src/runtime_pack.rs:320:5
+     |
+ 320 |     pub fn load_runtime_pack(&mut self, path: &Path) -> std::io::Result<()> {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0034]: multiple applicable items in scope
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:4011:12
+     |
+4011 |     runner.begin_token_residency(token_id as usize);
+     |            ^^^^^^^^^^^^^^^^^^^^^ multiple `begin_token_residency` found
+     |
+note: candidate #1 is defined in an impl for the type `Qwen36Runner`
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:3561:5
+     |
+3561 |     pub fn begin_token_residency(&mut self, token_id: usize) {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: candidate #2 is defined in an impl for the type `Qwen36Runner`
+    --> crates/objeta-qwen36-executor/src/runner_residency.rs:4:5
+     |
+   4 |     pub fn begin_token_residency(&mut self, token_id: usize) {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0034]: multiple applicable items in scope
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:4044:12
+     |
+4044 |     runner.begin_token_residency(token_id as usize);
+     |            ^^^^^^^^^^^^^^^^^^^^^ multiple `begin_token_residency` found
+     |
+note: candidate #1 is defined in an impl for the type `Qwen36Runner`
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:3561:5
+     |
+3561 |     pub fn begin_token_residency(&mut self, token_id: usize) {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: candidate #2 is defined in an impl for the type `Qwen36Runner`
+    --> crates/objeta-qwen36-executor/src/runner_residency.rs:4:5
+     |
+   4 |     pub fn begin_token_residency(&mut self, token_id: usize) {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0034]: multiple applicable items in scope
+    --> crates/objeta-qwen36-executor/src/runtime_tuner.rs:232:16
+     |
+ 232 |         runner.begin_token_residency(token_id);
+     |                ^^^^^^^^^^^^^^^^^^^^^ multiple `begin_token_residency` found
+     |
+note: candidate #1 is defined in an impl for the type `Qwen36Runner`
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:3561:5
+     |
+3561 |     pub fn begin_token_residency(&mut self, token_id: usize) {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: candidate #2 is defined in an impl for the type `Qwen36Runner`
+    --> crates/objeta-qwen36-executor/src/runner_residency.rs:4:5
+     |
+   4 |     pub fn begin_token_residency(&mut self, token_id: usize) {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0034]: multiple applicable items in scope
+    --> crates/objeta-qwen36-executor/src/runtime_tuner.rs:263:16
+     |
+ 263 |         runner.begin_token_residency(token_id);
+     |                ^^^^^^^^^^^^^^^^^^^^^ multiple `begin_token_residency` found
+     |
+note: candidate #1 is defined in an impl for the type `Qwen36Runner`
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:3561:5
+     |
+3561 |     pub fn begin_token_residency(&mut self, token_id: usize) {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: candidate #2 is defined in an impl for the type `Qwen36Runner`
+    --> crates/objeta-qwen36-executor/src/runner_residency.rs:4:5
+     |
+   4 |     pub fn begin_token_residency(&mut self, token_id: usize) {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0616]: field `is_gqa` of struct `LayerWeights` is private
+   --> crates/objeta-qwen36-executor/src/moe_stats.rs:363:50
+    |
+363 |             .filter(|(idx, _)| self.layers[*idx].is_gqa)
+    |                                                  ^^^^^^ private field
+
+error[E0616]: field `is_gqa` of struct `LayerWeights` is private
+   --> crates/objeta-qwen36-executor/src/moe_stats.rs:370:51
+    |
+370 |             .filter(|(idx, _)| !self.layers[*idx].is_gqa)
+    |                                                   ^^^^^^ private field
+
+error[E0616]: field `is_gqa` of struct `LayerWeights` is private
+   --> crates/objeta-qwen36-executor/src/moe_stats.rs:377:50
+    |
+377 |             .filter(|(idx, _)| self.layers[*idx].is_gqa)
+    |                                                  ^^^^^^ private field
+
+error[E0616]: field `is_gqa` of struct `LayerWeights` is private
+   --> crates/objeta-qwen36-executor/src/moe_stats.rs:384:51
+    |
+384 |             .filter(|(idx, _)| !self.layers[*idx].is_gqa)
+    |                                                   ^^^^^^ private field
+
+error[E0616]: field `is_gqa` of struct `LayerWeights` is private
+   --> crates/objeta-qwen36-executor/src/moe_stats.rs:391:50
+    |
+391 |             .filter(|(idx, _)| self.layers[*idx].is_gqa)
+    |                                                  ^^^^^^ private field
+
+error[E0616]: field `is_gqa` of struct `LayerWeights` is private
+   --> crates/objeta-qwen36-executor/src/moe_stats.rs:398:51
+    |
+398 |             .filter(|(idx, _)| !self.layers[*idx].is_gqa)
+    |                                                   ^^^^^^ private field
+
+error[E0624]: method `as_str` is private
+    --> crates/objeta-qwen36-executor/src/moe_stats.rs:533:69
+     |
+ 533 |                 "runtime_config_source": self.runtime_config_source.as_str(),
+     |                                                                     ^^^^^^ private method
+     |
+    ::: crates/objeta-qwen36-executor/src/qwen36_forward.rs:1203:5
+     |
+1203 |     fn as_str(self) -> &'static str {
+     |     ------------------------------- private method defined here
+
+warning: unused variable: `w_qkv`
+  --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:56:5
+   |
+56 |     w_qkv: &[u16],
+   |     ^^^^^ help: if this is intentional, prefix it with an underscore: `_w_qkv`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `w_o`
+  --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:57:5
+   |
+57 |     w_o: &[u16],
+   |     ^^^ help: if this is intentional, prefix it with an underscore: `_w_o`
+
+warning: unused variable: `rows`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:364:36
+    |
+364 | pub fn l2_norm_rows(x: &mut [f32], rows: usize, dim: usize) {
+    |                                    ^^^^ help: if this is intentional, prefix it with an underscore: `_rows`
+
+warning: unused variable: `n_heads`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:406:5
+    |
+406 |     n_heads: usize,
+    |     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_n_heads`
+
+warning: unused variable: `w_ptr`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:902:5
+    |
+902 |     w_ptr: *const f32,
+    |     ^^^^^ help: if this is intentional, prefix it with an underscore: `_w_ptr`
+
+warning: unused variable: `w_sizes`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:903:5
+    |
+903 |     w_sizes: *const i32, // [size of each weight matrix] × N_MATS
+    |     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_w_sizes`
+
+warning: unused variable: `n_mats`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:904:5
+    |
+904 |     n_mats: i32,
+    |     ^^^^^^ help: if this is intentional, prefix it with an underscore: `_n_mats`
+
+warning: unused variable: `h`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:906:5
+    |
+906 |     h: *const f32,
+    |     ^ help: if this is intentional, prefix it with an underscore: `_h`
+
+warning: unused variable: `conv_state`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:908:5
+    |
+908 |     conv_state: *mut f32,
+    |     ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_conv_state`
+
+warning: unused variable: `conv_ptr`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:909:5
+    |
+909 |     conv_ptr: *mut i32,
+    |     ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_conv_ptr`
+
+warning: unused variable: `S_state`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:910:5
+    |
+910 |     S_state: *mut f32,
+    |     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_S_state`
+
+warning: unused variable: `k_cache`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:911:5
+    |
+911 |     k_cache: *mut f32,
+    |     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_k_cache`
+
+warning: unused variable: `v_cache`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:912:5
+    |
+912 |     v_cache: *mut f32,
+    |     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_v_cache`
+
+warning: unused variable: `rope_cos`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:913:5
+    |
+913 |     rope_cos: *const f32,
+    |     ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_rope_cos`
+
+warning: unused variable: `rope_sin`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:914:5
+    |
+914 |     rope_sin: *const f32,
+    |     ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_rope_sin`
+
+warning: unused variable: `pos`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:916:5
+    |
+916 |     pos: i32,
+    |     ^^^ help: if this is intentional, prefix it with an underscore: `_pos`
+
+warning: unused variable: `seq_len`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:917:5
+    |
+917 |     seq_len: i32,
+    |     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_seq_len`
+
+warning: unused variable: `max_seq`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:918:5
+    |
+918 |     max_seq: i32,
+    |     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_max_seq`
+
+warning: unused variable: `layer_type`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:919:5
+    |
+919 |     layer_type: i32, // 0=DeltaNet, 1=FullGQA, 2=NoAttn
+    |     ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_layer_type`
+
+warning: unused variable: `ao_out`
+   --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:921:5
+    |
+921 |     ao_out: *mut f32,
+    |     ^^^^^^ help: if this is intentional, prefix it with an underscore: `_ao_out`
+
+warning: variable does not need to be mutable
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:2043:13
+     |
+2043 |         let mut delta_count = 0usize;
+     |             ----^^^^^^^^^^^
+     |             |
+     |             help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:2044:13
+     |
+2044 |         let mut deltas_skipped = 0u32;
+     |             ----^^^^^^^^^^^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: unused variable: `stride`
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:2042:13
+     |
+2042 |         let stride = (1.0 / self.fusion_ratio.max(0.01)).round() as usize;
+     |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_stride`
+
+warning: unused variable: `delta_count`
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:2043:13
+     |
+2043 |         let mut delta_count = 0usize;
+     |             ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_delta_count`
+
+warning: unused variable: `deltas_skipped`
+    --> crates/objeta-qwen36-executor/src/qwen36_forward.rs:2044:13
+     |
+2044 |         let mut deltas_skipped = 0u32;
+     |             ^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_deltas_skipped`
+
+warning: unused variable: `selected_experts`
+    --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:1235:5
+     |
+1235 |     selected_experts: &[usize],
+     |     ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_selected_experts`
+
+warning: value assigned to `policy_select_wall` is never read
+    --> crates/objeta-qwen36-executor/src/moe_dispatch.rs:1629:34
+     |
+1629 |     let mut policy_select_wall = 0.0;
+     |                                  ^^^
+     |
+     = help: maybe it is overwritten before being read?
+     = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `target_logit_ptr`
+   --> crates/objeta-qwen36-executor/src/speculative.rs:112:42
+    |
+112 |     pub fn prefill_token_done(&mut self, target_logit_ptr: *const c_float) {
+    |                                          ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_target_logit_ptr`
+
+warning: unused variable: `count`
+   --> crates/objeta-qwen36-executor/src/speculative.rs:238:13
+    |
+238 |         let count = if self.total_accepted == self.gamma {
+    |             ^^^^^ help: if this is intentional, prefix it with an underscore: `_count`
+
+Some errors have detailed explanations: E0034, E0583, E0592, E0603, E0616, E0624.
+For more information about an error, try `rustc --explain E0034`.
+warning: `objeta-qwen36-executor` (lib) generated 35 warnings
+error: could not compile `objeta-qwen36-executor` (lib) due to 24 previous errors; 35 warnings emitted

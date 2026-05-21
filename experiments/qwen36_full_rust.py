@@ -34,7 +34,11 @@ REQUIRED_FIELDS = [
     "actual_expert_bytes_loaded", "resident_cache_bytes_reused",
     "resident_cache_hit_count", "resident_cache_miss_count", "direct_cold_load_count",
     "resident_cache_enabled", "resident_cache_capacity_bytes",
-    "resident_cache_resident_bytes"
+    "resident_cache_resident_bytes", "pinned_resident_bytes",
+    "token_window_peak_resident_bytes", "eviction_count_during_token",
+    "eviction_count_at_token_end", "use_fused_moe", "fused_moe_variant",
+    "dequantized_scratch_bytes", "finish_reason", "stop_token_id",
+    "stop_token_text", "stopped_at_decode_token"
 ]
 
 def validate_summary_schema(summary):
@@ -86,6 +90,14 @@ if hasattr(lib, "lko_runner_set_moe_max_experts"):
 if hasattr(lib, "lko_runner_set_expert_policy_json"):
     lib.lko_runner_set_expert_policy_json.argtypes = [ctypes.c_char_p]
     lib.lko_runner_set_expert_policy_json.restype = ctypes.c_int32
+
+if hasattr(lib, "lko_runner_get_instance"):
+    lib.lko_runner_get_instance.argtypes = []
+    lib.lko_runner_get_instance.restype = ctypes.c_void_p
+
+if hasattr(lib, "lko_runner_init_page_cache"):
+    lib.lko_runner_init_page_cache.argtypes = [ctypes.c_void_p, ctypes.c_int64]
+    lib.lko_runner_init_page_cache.restype = ctypes.c_int32
 
 if hasattr(lib, "lko_moe_init_page_cache"):
     lib.lko_moe_init_page_cache.argtypes = [ctypes.c_int64]
@@ -177,7 +189,17 @@ def has_repetition(tokens, max_l=8):
                 return True
     return False
 
-def generate(prompt_ids, max_tokens=20, temperature=0.7, top_k=40, tok=None, early_abort=False):
+def get_stop_token_info(tok):
+    stop_map = {}
+    if getattr(tok, "eos_token_id", None) is not None:
+        stop_map[int(tok.eos_token_id)] = tok.eos_token or tok.decode([tok.eos_token_id])
+    for special in ("<|im_end|>", "<|endoftext|>"):
+        ids = tok.encode(special, add_special_tokens=False)
+        if len(ids) == 1:
+            stop_map[int(ids[0])] = special
+    return stop_map
+
+def generate(prompt_ids, max_tokens=20, temperature=0.7, top_k=40, tok=None, early_abort=False, stop_token_map=None):
     tokens = list(prompt_ids)
     n_prompt = len(tokens)
     print(f"Prefilling {n_prompt} tokens...")
@@ -205,12 +227,20 @@ def generate(prompt_ids, max_tokens=20, temperature=0.7, top_k=40, tok=None, ear
     aborted = False
     abort_reason = None
     abort_step = None
+    finish_reason = "length"
+    stop_token_id = None
+    stop_token_text = None
+    stopped_at_decode_token = None
 
     for step in range(max_tokens):
+        if stop_token_map and next_token in stop_token_map:
+            finish_reason = "stop_token"
+            stop_token_id = int(next_token)
+            stop_token_text = stop_token_map[next_token]
+            stopped_at_decode_token = step
+            break
         generated.append(next_token)
         pos = n_prompt + step
-        if next_token == 2:
-            break
 
         # Check early abort conditions
         if early_abort:
@@ -266,7 +296,18 @@ def generate(prompt_ids, max_tokens=20, temperature=0.7, top_k=40, tok=None, ear
     total_s = time.perf_counter() - t_start
     n_gen = len(generated)
     print(f"\n  {n_gen} tokens in {total_s:.1f}s ({n_gen/total_s:.2f} tok/s)")
-    return generated, entropies, step_metrics, aborted, abort_reason, abort_step
+    return (
+        generated,
+        entropies,
+        step_metrics,
+        aborted,
+        abort_reason,
+        abort_step,
+        finish_reason,
+        stop_token_id,
+        stop_token_text,
+        stopped_at_decode_token,
+    )
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Qwen3.6 Rust executor smoke/full generation")
@@ -332,22 +373,23 @@ def main():
         strategy_dict["moe_on_deltanet"] = args.moe_on_deltanet
 
     # Configure runner
-    if hasattr(lib, "lko_moe_init_page_cache"):
+    if hasattr(lib, "lko_runner_get_instance") and hasattr(lib, "lko_runner_init_page_cache"):
+        runner_ptr = lib.lko_runner_get_instance()
+        if runner_ptr:
+            lib.lko_runner_init_page_cache(runner_ptr, strategy_dict["expert_cache_mb"] * 1024 * 1024)
+        elif hasattr(lib, "lko_moe_init_page_cache"):
+            lib.lko_moe_init_page_cache(strategy_dict["expert_cache_mb"] * 1024 * 1024)
+    elif hasattr(lib, "lko_moe_init_page_cache"):
         lib.lko_moe_init_page_cache(strategy_dict["expert_cache_mb"] * 1024 * 1024)
     if hasattr(lib, "lko_runner_set_fusion_ratio"):
         lib.lko_runner_set_fusion_ratio(strategy_dict["fusion_ratio"])
     if hasattr(lib, "lko_runner_set_moe_on_deltanet"):
         lib.lko_runner_set_moe_on_deltanet(strategy_dict["moe_on_deltanet"])
-    if hasattr(lib, "lko_runner_set_moe_top_p"):
-        lib.lko_runner_set_moe_top_p(strategy_dict["moe_top_p"])
-    if hasattr(lib, "lko_runner_set_moe_prune_mode"):
-        lib.lko_runner_set_moe_prune_mode(0 if strategy_dict["moe_prune_mode"] == "top_p" else 1)
+    os.environ["OBJETA_MOE_TOP_P"] = str(strategy_dict.get("moe_top_p", 1.0))
+    os.environ["OBJETA_MOE_MIN_EXPERTS"] = str(strategy_dict.get("min_experts", 2))
+    os.environ["OBJETA_MOE_MAX_EXPERTS"] = str(strategy_dict.get("max_experts", 8))
     if hasattr(lib, "lko_runner_set_moe_contrib_threshold"):
         lib.lko_runner_set_moe_contrib_threshold(strategy_dict["moe_contrib_threshold"])
-    if hasattr(lib, "lko_runner_set_moe_min_experts"):
-        lib.lko_runner_set_moe_min_experts(strategy_dict.get("min_experts", 2))
-    if hasattr(lib, "lko_runner_set_moe_max_experts"):
-        lib.lko_runner_set_moe_max_experts(strategy_dict.get("max_experts", 8))
     if strategy_dict.get("expert_policy") is not None and hasattr(lib, "lko_runner_set_expert_policy_json"):
         policy_json = json.dumps(strategy_dict["expert_policy"]).encode("utf-8")
         assert lib.lko_runner_set_expert_policy_json(policy_json), "Failed to set expert_policy JSON"
@@ -419,6 +461,7 @@ def main():
     tok_dir = f"/Users/yasuno/.cache/huggingface/hub/models--Qwen--Qwen3.6-35B-A3B/snapshots/{snap}"
     tok = AutoTokenizer.from_pretrained(tok_dir)
     integrity_hashes = get_model_integrity_hashes(tok_dir, BIN_DIR)
+    stop_token_map = get_stop_token_info(tok)
     print(f"Vocab: {tok.vocab_size}\n")
 
     t_start_all = time.perf_counter()
@@ -429,8 +472,25 @@ def main():
     prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:8]
 
     print(f"── Prompt: \"{prompt}\" ──")
-    gen, entropies, step_metrics, aborted, abort_reason, abort_step = generate(
-        ids, max_tokens=args.max_tokens, temperature=args.temperature, top_k=args.top_k, tok=tok, early_abort=args.early_abort
+    (
+        gen,
+        entropies,
+        step_metrics,
+        aborted,
+        abort_reason,
+        abort_step,
+        finish_reason,
+        stop_token_id,
+        stop_token_text,
+        stopped_at_decode_token,
+    ) = generate(
+        ids,
+        max_tokens=args.max_tokens,
+        temperature=args.temperature,
+        top_k=args.top_k,
+        tok=tok,
+        early_abort=args.early_abort,
+        stop_token_map=stop_token_map,
     )
     text = tok.decode(gen, skip_special_tokens=True)
     print(f"  Output: {text}")
@@ -451,10 +511,37 @@ def main():
     resident_cache_enabled = False
     resident_cache_capacity_bytes = 0
     resident_cache_resident_bytes = 0
+    pinned_resident_bytes = 0
+    token_window_peak_resident_bytes = 0
+    eviction_count_during_token = 0
+    eviction_count_at_token_end = 0
     resident_cache_hit_rate = 0.0
+    dequantized_scratch_bytes = 0
     moe_fraction = 0.0
     avg_forward_wall_ms = 0.0
     avg_moe_wall_ms = 0.0
+    use_fused_moe = bool(os.environ.get("OBJETA_USE_FUSED_MOE") == "1")
+    fused_moe_variant = os.environ.get("OBJETA_FUSED_MOE_VARIANT", "chunked128")
+    runtime_config_source = "defaults"
+    policy_kind = "exact"
+    effective_moe_top_p = 1.0
+    effective_moe_min_experts = 8
+    effective_moe_max_experts = 8
+    runtime_pack_loaded = False
+    runtime_pack_path = None
+    runtime_profile_loaded = False
+    expert_importance_loaded = False
+    residency_plan_loaded = False
+    phase_policy_loaded = False
+    expert_coresidency_loaded = False
+    expert_eviction_policy = "lru"
+    initial_hot_expert_count = 0
+    initial_hot_expert_bytes = 0
+    importance_eviction_enabled = False
+    evicted_hot_count = 0
+    evicted_warm_count = 0
+    evicted_cold_count = 0
+    evicted_unknown_count = 0
     stats_json = None
 
     if hasattr(lib, "lko_runner_get_moe_stats_json"):
@@ -476,7 +563,17 @@ def main():
             resident_cache_enabled = bool(summary_stats.get("resident_cache_enabled", False))
             resident_cache_capacity_bytes = int(summary_stats.get("resident_cache_capacity_bytes", 0))
             resident_cache_resident_bytes = int(summary_stats.get("resident_cache_resident_bytes", 0))
+            pinned_resident_bytes = int(summary_stats.get("pinned_resident_bytes", 0))
+            token_window_peak_resident_bytes = int(summary_stats.get("token_window_peak_resident_bytes", 0))
+            eviction_count_during_token = int(summary_stats.get("eviction_count_during_token", 0))
+            eviction_count_at_token_end = int(summary_stats.get("eviction_count_at_token_end", 0))
             resident_cache_hit_rate = float(summary_stats.get("resident_cache_hit_rate", 0.0))
+            dequantized_scratch_bytes = int(summary_stats.get("dequantized_scratch_bytes", 0))
+            importance_eviction_enabled = bool(summary_stats.get("importance_eviction_enabled", False))
+            evicted_hot_count = int(summary_stats.get("evicted_hot_count", 0))
+            evicted_warm_count = int(summary_stats.get("evicted_warm_count", 0))
+            evicted_cold_count = int(summary_stats.get("evicted_cold_count", 0))
+            evicted_unknown_count = int(summary_stats.get("evicted_unknown_count", 0))
             
             warm_hits = summary_stats.get("avg_warm_hit_count", 0.0) * summary_stats.get("total_calls", 0.0)
             cold_hits = summary_stats.get("avg_cold_hit_count", 0.0) * summary_stats.get("total_calls", 0.0)
@@ -488,6 +585,25 @@ def main():
             avg_moe_wall_ms = fwd_stats.get("avg_moe_wall_ms_per_token", 0.0)
             if avg_forward_wall_ms > 0:
                 moe_fraction = avg_moe_wall_ms / avg_forward_wall_ms
+            runtime_stats = stats_json.get("effective_runtime", {})
+            runtime_pack_stats = stats_json.get("runtime_pack", {})
+            runtime_config_source = runtime_stats.get("runtime_config_source", "defaults")
+            policy_kind = runtime_stats.get("policy_kind", "exact")
+            effective_moe_top_p = float(runtime_stats.get("effective_moe_top_p", 1.0))
+            effective_moe_min_experts = int(runtime_stats.get("effective_moe_min_experts", 8))
+            effective_moe_max_experts = int(runtime_stats.get("effective_moe_max_experts", 8))
+            use_fused_moe = bool(runtime_stats.get("use_fused_moe", use_fused_moe))
+            fused_moe_variant = runtime_stats.get("fused_moe_variant", fused_moe_variant)
+            runtime_pack_loaded = bool(runtime_pack_stats.get("runtime_pack_loaded", False))
+            runtime_pack_path = runtime_pack_stats.get("runtime_pack_path")
+            runtime_profile_loaded = bool(runtime_pack_stats.get("runtime_profile_loaded", False))
+            expert_importance_loaded = bool(runtime_pack_stats.get("expert_importance_loaded", False))
+            residency_plan_loaded = bool(runtime_pack_stats.get("residency_plan_loaded", False))
+            phase_policy_loaded = bool(runtime_pack_stats.get("phase_policy_loaded", False))
+            expert_coresidency_loaded = bool(runtime_pack_stats.get("expert_coresidency_loaded", False))
+            expert_eviction_policy = runtime_pack_stats.get("expert_eviction_policy", "lru")
+            initial_hot_expert_count = int(runtime_pack_stats.get("initial_hot_expert_count", 0))
+            initial_hot_expert_bytes = int(runtime_pack_stats.get("initial_hot_expert_bytes", 0))
 
     # Early abort stats
     first_garbage = None
@@ -500,7 +616,7 @@ def main():
 
     # Output summary compliant with METRICS_SCHEMA.md
     import datetime
-    run_dir = Path(f"runs/run_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}")
+    run_dir = Path(f"runs/run_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S_%f')}")
     run_dir.mkdir(parents=True, exist_ok=True)
 
     # Save effective strategy.json inside run directory
@@ -514,6 +630,9 @@ def main():
         if stats_json is not None:
             for event in stats_json.get("moe_io_events", []):
                 f.write(json.dumps({"event": "moe_io", **event}, ensure_ascii=False) + "\n")
+    if stats_json is not None:
+        with open(run_dir / "moe_stats.json", "w") as f:
+            json.dump(stats_json, f, indent=2)
 
     summary = {
         "strategy_name": args.strategy,
@@ -541,6 +660,33 @@ def main():
         "resident_cache_enabled": resident_cache_enabled,
         "resident_cache_capacity_bytes": resident_cache_capacity_bytes,
         "resident_cache_resident_bytes": resident_cache_resident_bytes,
+        "pinned_resident_bytes": pinned_resident_bytes,
+        "token_window_peak_resident_bytes": token_window_peak_resident_bytes,
+        "eviction_count_during_token": eviction_count_during_token,
+        "eviction_count_at_token_end": eviction_count_at_token_end,
+        "use_fused_moe": use_fused_moe,
+        "fused_moe_variant": fused_moe_variant,
+        "runtime_config_source": runtime_config_source,
+        "policy_kind": policy_kind,
+        "effective_moe_top_p": effective_moe_top_p,
+        "effective_moe_min_experts": effective_moe_min_experts,
+        "effective_moe_max_experts": effective_moe_max_experts,
+        "runtime_pack_loaded": runtime_pack_loaded,
+        "runtime_pack_path": runtime_pack_path,
+        "runtime_profile_loaded": runtime_profile_loaded,
+        "expert_importance_loaded": expert_importance_loaded,
+        "residency_plan_loaded": residency_plan_loaded,
+        "phase_policy_loaded": phase_policy_loaded,
+        "expert_coresidency_loaded": expert_coresidency_loaded,
+        "expert_eviction_policy": expert_eviction_policy,
+        "initial_hot_expert_count": initial_hot_expert_count,
+        "initial_hot_expert_bytes": initial_hot_expert_bytes,
+        "importance_eviction_enabled": importance_eviction_enabled,
+        "evicted_hot_count": evicted_hot_count,
+        "evicted_warm_count": evicted_warm_count,
+        "evicted_cold_count": evicted_cold_count,
+        "evicted_unknown_count": evicted_unknown_count,
+        "dequantized_scratch_bytes": dequantized_scratch_bytes,
         "resident_cache_hit_rate": resident_cache_hit_rate,
         "warm_hit_rate": warm_hit_rate,
         "cold_load_count": cold_load_count,
@@ -555,6 +701,10 @@ def main():
         "aborted": aborted,
         "abort_reason": abort_reason,
         "abort_step": abort_step,
+        "finish_reason": finish_reason,
+        "stop_token_id": stop_token_id,
+        "stop_token_text": stop_token_text,
+        "stopped_at_decode_token": stopped_at_decode_token,
         "output": text,
         
         # Debug/Integrity metadata

@@ -14,6 +14,8 @@ use std::path::Path;
 pub enum ExpertPolicyConfig {
     #[serde(rename = "exact")]
     Exact,
+    #[serde(rename = "lko_aware")]
+    LkoAware,
     #[serde(rename = "top_p")]
     TopP {
         p: f32,
@@ -54,7 +56,7 @@ pub fn parse_expert_policy_json(json: &str) -> Result<ExpertPolicyConfig, serde_
             let mut value: serde_json::Value = serde_json::from_str(json)?;
             if let Some(obj) = value.as_object_mut() {
                 if !obj.contains_key("type") {
-                    if let Some(kind) = obj.get("kind").cloned() {
+                    if let Some(kind) = obj.remove("kind") {
                         obj.insert("type".to_string(), kind);
                     }
                 }
@@ -103,7 +105,9 @@ pub fn load_strategy(bin_dir: &Path) -> Option<StrategyConfig> {
     let cfg: StrategyConfig = serde_json::from_str(&data).ok()?;
     eprintln!(
         "[objeta] strategy loaded: family={}, dominance={}, confidence={:.0}%",
-        cfg.family, cfg.dominance, cfg.confidence * 100.0
+        cfg.family,
+        cfg.dominance,
+        cfg.confidence * 100.0
     );
     Some(cfg)
 }
@@ -122,8 +126,12 @@ pub fn requantize_f16(weights: &[u16], target_bits: u8) -> Vec<u16> {
     let mut max_v = f32::MIN;
     for &h in weights {
         let v = f16_to_f32(h);
-        if v < min_v { min_v = v; }
-        if v > max_v { max_v = v; }
+        if v < min_v {
+            min_v = v;
+        }
+        if v > max_v {
+            max_v = v;
+        }
     }
     let span = max_v - min_v;
     if span < 1e-10 {
@@ -131,12 +139,15 @@ pub fn requantize_f16(weights: &[u16], target_bits: u8) -> Vec<u16> {
     }
     let scale = span / (n_levels - 1.0);
 
-    weights.iter().map(|&h| {
-        let v = f16_to_f32(h);
-        let q = ((v - min_v) / scale).round().clamp(0.0, n_levels - 1.0);
-        let dq = q * scale + min_v;
-        f32_to_f16(dq)
-    }).collect()
+    weights
+        .iter()
+        .map(|&h| {
+            let v = f16_to_f32(h);
+            let q = ((v - min_v) / scale).round().clamp(0.0, n_levels - 1.0);
+            let dq = q * scale + min_v;
+            f32_to_f16(dq)
+        })
+        .collect()
 }
 
 // ── f16 ↔ f32 ──────────────────────────────────────────────────────────
@@ -161,7 +172,11 @@ fn f32_to_f16(val: f32) -> u16 {
     let exp = ((bits >> 23) & 0xFF) as i32 - 127 + 15;
     let mant = (bits >> 13) & 0x3FF;
     if exp <= 0 {
-        if mant == 0 { sign as u16 } else { (sign as u32 | (mant >> 1)) as u16 }
+        if mant == 0 {
+            sign as u16
+        } else {
+            (sign as u32 | (mant >> 1)) as u16
+        }
     } else if exp >= 31 {
         (sign as u32 | 0x7C00 | mant) as u16
     } else {
@@ -183,11 +198,21 @@ mod tests {
         for &h in &result {
             unique.insert((f16_to_f32(h) * 1000.0) as i32);
         }
-        assert!(unique.len() <= 16, "q4 should have ≤16 unique values, got {}", unique.len());
+        assert!(
+            unique.len() <= 16,
+            "q4 should have ≤16 unique values, got {}",
+            unique.len()
+        );
     }
 
     #[test]
     fn test_load_strategy_missing() {
         assert!(load_strategy(Path::new("/nonexistent")).is_none());
+    }
+
+    #[test]
+    fn test_parse_expert_policy_kind_alias() {
+        let policy = parse_expert_policy_json(r#"{"kind":"lko_aware"}"#).unwrap();
+        assert!(matches!(policy, ExpertPolicyConfig::LkoAware));
     }
 }

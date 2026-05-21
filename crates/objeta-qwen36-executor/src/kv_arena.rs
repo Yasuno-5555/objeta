@@ -51,12 +51,7 @@ pub struct KVArena {
 }
 
 impl KVArena {
-    pub fn new(
-        n_layers: u32,
-        n_kv_heads: u32,
-        head_dim: u32,
-        max_seq_len: u32,
-    ) -> Self {
+    pub fn new(n_layers: u32, n_kv_heads: u32, head_dim: u32, max_seq_len: u32) -> Self {
         // MLX row-major layout: shape (n_kv_heads, max_seq_len, head_dim)
         // Element [h, p, d] at offset: h * max_seq_len * head_dim + p * head_dim + d
         let head_stride = head_dim;
@@ -103,8 +98,7 @@ impl KVArena {
 
     /// True if all layer buffers are registered.
     pub fn is_ready(&self) -> bool {
-        self.k_ptrs.iter().all(|&p| p != 0)
-            && self.v_ptrs.iter().all(|&p| p != 0)
+        self.k_ptrs.iter().all(|&p| p != 0) && self.v_ptrs.iter().all(|&p| p != 0)
     }
 
     // ── Write ────────────────────────────────────────────────────
@@ -115,13 +109,7 @@ impl KVArena {
     /// Element [h, p, d] at offset: h * max_seq_len * head_dim + p * head_dim + d.
     /// k_data/v_data: contiguous f16, n_kv_heads * head_dim elements,
     ///                interleaved as [head0_d0..d63, head1_d0..d63, ...].
-    pub fn write_kv(
-        &self,
-        layer_idx: u32,
-        position: u32,
-        k_data: *const u16,
-        v_data: *const u16,
-    ) {
+    pub fn write_kv(&self, layer_idx: u32, position: u32, k_data: *const u16, v_data: *const u16) {
         if position >= self.max_seq_len {
             return;
         }
@@ -158,8 +146,7 @@ impl KVArena {
         let pos_base = position as usize * hd;
         for h in 0..self.n_kv_heads as usize {
             unsafe {
-                ptr::copy_nonoverlapping(
-                    k_data.add(h * hd), k_ptr.add(h * hop + pos_base), hd);
+                ptr::copy_nonoverlapping(k_data.add(h * hd), k_ptr.add(h * hop + pos_base), hd);
             }
         }
     }
@@ -178,19 +165,13 @@ impl KVArena {
         let pos_base = position as usize * hd;
         for h in 0..self.n_kv_heads as usize {
             unsafe {
-                ptr::copy_nonoverlapping(
-                    v_data.add(h * hd), v_ptr.add(h * hop + pos_base), hd);
+                ptr::copy_nonoverlapping(v_data.add(h * hd), v_ptr.add(h * hop + pos_base), hd);
             }
         }
     }
 
     /// Write K/V for ALL layers at the same position.
-    pub fn write_all_layers(
-        &self,
-        position: u32,
-        all_k: *const u16,
-        all_v: *const u16,
-    ) {
+    pub fn write_all_layers(&self, position: u32, all_k: *const u16, all_v: *const u16) {
         let hd = self.head_stride as usize;
         let hop = self.head_offset as usize;
         let heads = self.n_kv_heads as usize;
@@ -206,9 +187,15 @@ impl KVArena {
             for h in 0..heads {
                 unsafe {
                     ptr::copy_nonoverlapping(
-                        layer_src_k.add(h * hd), k_ptr.add(h * hop + pos_base), hd);
+                        layer_src_k.add(h * hd),
+                        k_ptr.add(h * hop + pos_base),
+                        hd,
+                    );
                     ptr::copy_nonoverlapping(
-                        layer_src_v.add(h * hd), v_ptr.add(h * hop + pos_base), hd);
+                        layer_src_v.add(h * hd),
+                        v_ptr.add(h * hop + pos_base),
+                        hd,
+                    );
                 }
             }
         }
@@ -269,12 +256,7 @@ impl KVArena {
 
     /// Copy KV cache from another arena for a single layer.
     /// Copies `up_to_position` positions, handling MLX non-contiguous layout.
-    pub fn copy_from(
-        &self,
-        src: &KVArena,
-        layer_idx: u32,
-        up_to_position: u32,
-    ) {
+    pub fn copy_from(&self, src: &KVArena, layer_idx: u32, up_to_position: u32) {
         if up_to_position == 0 || up_to_position > self.max_seq_len {
             return;
         }
@@ -292,20 +274,14 @@ impl KVArena {
         for h in 0..self.n_kv_heads as usize {
             let head_base = h * hop;
             unsafe {
-                ptr::copy_nonoverlapping(
-                    src_k.add(head_base), dst_k.add(head_base), n_pos * hd);
-                ptr::copy_nonoverlapping(
-                    src_v.add(head_base), dst_v.add(head_base), n_pos * hd);
+                ptr::copy_nonoverlapping(src_k.add(head_base), dst_k.add(head_base), n_pos * hd);
+                ptr::copy_nonoverlapping(src_v.add(head_base), dst_v.add(head_base), n_pos * hd);
             }
         }
     }
 
     /// Copy KV from another arena for ALL layers.
-    pub fn copy_all_from(
-        &self,
-        src: &KVArena,
-        up_to_position: u32,
-    ) {
+    pub fn copy_all_from(&self, src: &KVArena, up_to_position: u32) {
         for layer in 0..self.n_layers {
             self.copy_from(src, layer, up_to_position);
         }
@@ -343,10 +319,14 @@ impl KVArena {
             let k_ptr = self.k_ptrs[layer] as *mut u16;
             let v_ptr = self.v_ptrs[layer] as *mut u16;
             if !k_ptr.is_null() {
-                unsafe { ptr::write_bytes(k_ptr, 0, n_elems); }
+                unsafe {
+                    ptr::write_bytes(k_ptr, 0, n_elems);
+                }
             }
             if !v_ptr.is_null() {
-                unsafe { ptr::write_bytes(v_ptr, 0, n_elems); }
+                unsafe {
+                    ptr::write_bytes(v_ptr, 0, n_elems);
+                }
             }
         }
     }
@@ -354,22 +334,34 @@ impl KVArena {
     // ── Accessors ────────────────────────────────────────────────
 
     #[inline]
-    pub fn n_layers(&self) -> u32 { self.n_layers }
+    pub fn n_layers(&self) -> u32 {
+        self.n_layers
+    }
 
     #[inline]
-    pub fn n_kv_heads(&self) -> u32 { self.n_kv_heads }
+    pub fn n_kv_heads(&self) -> u32 {
+        self.n_kv_heads
+    }
 
     #[inline]
-    pub fn head_dim(&self) -> u32 { self.head_dim }
+    pub fn head_dim(&self) -> u32 {
+        self.head_dim
+    }
 
     #[inline]
-    pub fn max_seq_len(&self) -> u32 { self.max_seq_len }
+    pub fn max_seq_len(&self) -> u32 {
+        self.max_seq_len
+    }
 
     #[inline]
-    pub fn head_stride(&self) -> u32 { self.head_stride }
+    pub fn head_stride(&self) -> u32 {
+        self.head_stride
+    }
 
     #[inline]
-    pub fn seq_len(&self) -> u32 { self.seq_len }
+    pub fn seq_len(&self) -> u32 {
+        self.seq_len
+    }
 
     pub fn set_seq_len(&mut self, seq_len: u32) {
         self.seq_len = seq_len.min(self.max_seq_len);
@@ -406,36 +398,40 @@ pub extern "C" fn lko_kv_arena_create(
 #[no_mangle]
 pub extern "C" fn lko_kv_arena_destroy(arena: *mut LKOKVArena) {
     if !arena.is_null() {
-        unsafe { drop(Box::from_raw(arena)); }
+        unsafe {
+            drop(Box::from_raw(arena));
+        }
     }
 }
 
 /// Register a K buffer pointer for a layer.
 #[no_mangle]
-pub extern "C" fn lko_kv_arena_register_k(
-    arena: *mut LKOKVArena,
-    layer_idx: c_int,
-    ptr: u64,
-) {
-    if arena.is_null() { return; }
-    unsafe { (*arena).register_k(layer_idx as u32, ptr); }
+pub extern "C" fn lko_kv_arena_register_k(arena: *mut LKOKVArena, layer_idx: c_int, ptr: u64) {
+    if arena.is_null() {
+        return;
+    }
+    unsafe {
+        (*arena).register_k(layer_idx as u32, ptr);
+    }
 }
 
 /// Register a V buffer pointer for a layer.
 #[no_mangle]
-pub extern "C" fn lko_kv_arena_register_v(
-    arena: *mut LKOKVArena,
-    layer_idx: c_int,
-    ptr: u64,
-) {
-    if arena.is_null() { return; }
-    unsafe { (*arena).register_v(layer_idx as u32, ptr); }
+pub extern "C" fn lko_kv_arena_register_v(arena: *mut LKOKVArena, layer_idx: c_int, ptr: u64) {
+    if arena.is_null() {
+        return;
+    }
+    unsafe {
+        (*arena).register_v(layer_idx as u32, ptr);
+    }
 }
 
 /// Check if all buffers are registered.
 #[no_mangle]
 pub extern "C" fn lko_kv_arena_is_ready(arena: *mut LKOKVArena) -> c_int {
-    if arena.is_null() { return 0; }
+    if arena.is_null() {
+        return 0;
+    }
     unsafe { (*arena).is_ready() as c_int }
 }
 
@@ -450,7 +446,9 @@ pub extern "C" fn lko_kv_arena_write(
     k_data: *const c_void,
     v_data: *const c_void,
 ) {
-    if arena.is_null() { return; }
+    if arena.is_null() {
+        return;
+    }
     unsafe {
         (*arena).write_kv(
             layer_idx as u32,
@@ -473,13 +471,19 @@ pub extern "C" fn lko_kv_arena_get_k_slice(
     out_ptr: *mut u64,
     out_len: *mut u64,
 ) {
-    if arena.is_null() { return; }
+    if arena.is_null() {
+        return;
+    }
     let (ptr, len) = unsafe { (*arena).get_k_slice(layer_idx as u32, start as u32, end as u32) };
     if !out_ptr.is_null() {
-        unsafe { *out_ptr = ptr as u64; }
+        unsafe {
+            *out_ptr = ptr as u64;
+        }
     }
     if !out_len.is_null() {
-        unsafe { *out_len = len; }
+        unsafe {
+            *out_len = len;
+        }
     }
 }
 
@@ -493,13 +497,19 @@ pub extern "C" fn lko_kv_arena_get_v_slice(
     out_ptr: *mut u64,
     out_len: *mut u64,
 ) {
-    if arena.is_null() { return; }
+    if arena.is_null() {
+        return;
+    }
     let (ptr, len) = unsafe { (*arena).get_v_slice(layer_idx as u32, start as u32, end as u32) };
     if !out_ptr.is_null() {
-        unsafe { *out_ptr = ptr as u64; }
+        unsafe {
+            *out_ptr = ptr as u64;
+        }
     }
     if !out_len.is_null() {
-        unsafe { *out_len = len; }
+        unsafe {
+            *out_len = len;
+        }
     }
 }
 
@@ -513,10 +523,20 @@ pub extern "C" fn lko_kv_arena_get_k_ptr(
     out_ptr: *mut u64,
     out_len: *mut u64,
 ) {
-    if arena.is_null() { return; }
+    if arena.is_null() {
+        return;
+    }
     let (ptr, len) = unsafe { (*arena).get_k_ptr(layer_idx as u32) };
-    if !out_ptr.is_null() { unsafe { *out_ptr = ptr; } }
-    if !out_len.is_null() { unsafe { *out_len = len; } }
+    if !out_ptr.is_null() {
+        unsafe {
+            *out_ptr = ptr;
+        }
+    }
+    if !out_len.is_null() {
+        unsafe {
+            *out_len = len;
+        }
+    }
 }
 
 /// Get full V buffer info for a layer.
@@ -527,10 +547,20 @@ pub extern "C" fn lko_kv_arena_get_v_ptr(
     out_ptr: *mut u64,
     out_len: *mut u64,
 ) {
-    if arena.is_null() { return; }
+    if arena.is_null() {
+        return;
+    }
     let (ptr, len) = unsafe { (*arena).get_v_ptr(layer_idx as u32) };
-    if !out_ptr.is_null() { unsafe { *out_ptr = ptr; } }
-    if !out_len.is_null() { unsafe { *out_len = len; } }
+    if !out_ptr.is_null() {
+        unsafe {
+            *out_ptr = ptr;
+        }
+    }
+    if !out_len.is_null() {
+        unsafe {
+            *out_len = len;
+        }
+    }
 }
 
 /// Copy KV from `src_arena` into `dst_arena` for `layer_idx`,
@@ -542,7 +572,9 @@ pub extern "C" fn lko_kv_arena_copy_layer(
     layer_idx: c_int,
     up_to_position: c_int,
 ) {
-    if dst_arena.is_null() || src_arena.is_null() { return; }
+    if dst_arena.is_null() || src_arena.is_null() {
+        return;
+    }
     let dst = unsafe { &*dst_arena };
     let src = unsafe { &*src_arena };
     dst.copy_from(src, layer_idx as u32, up_to_position as u32);
@@ -555,7 +587,9 @@ pub extern "C" fn lko_kv_arena_copy_all(
     src_arena: *mut LKOKVArena,
     up_to_position: c_int,
 ) {
-    if dst_arena.is_null() || src_arena.is_null() { return; }
+    if dst_arena.is_null() || src_arena.is_null() {
+        return;
+    }
     let dst = unsafe { &*dst_arena };
     let src = unsafe { &*src_arena };
     dst.copy_all_from(src, up_to_position as u32);
@@ -563,33 +597,44 @@ pub extern "C" fn lko_kv_arena_copy_all(
 
 /// Set sequence length.
 #[no_mangle]
-pub extern "C" fn lko_kv_arena_set_seq_len(
-    arena: *mut LKOKVArena,
-    seq_len: c_int,
-) {
-    if arena.is_null() { return; }
-    unsafe { (*arena).set_seq_len(seq_len as u32); }
+pub extern "C" fn lko_kv_arena_set_seq_len(arena: *mut LKOKVArena, seq_len: c_int) {
+    if arena.is_null() {
+        return;
+    }
+    unsafe {
+        (*arena).set_seq_len(seq_len as u32);
+    }
 }
 
 /// Get sequence length.
 #[no_mangle]
 pub extern "C" fn lko_kv_arena_get_seq_len(arena: *mut LKOKVArena) -> c_int {
-    if arena.is_null() { return 0; }
+    if arena.is_null() {
+        return 0;
+    }
     unsafe { (*arena).seq_len() as c_int }
 }
 
 /// Zero the active region (up to seq_len) of all buffers.
 #[no_mangle]
 pub extern "C" fn lko_kv_arena_zero_active(arena: *mut LKOKVArena) {
-    if arena.is_null() { return; }
-    unsafe { (*arena).zero_active(); }
+    if arena.is_null() {
+        return;
+    }
+    unsafe {
+        (*arena).zero_active();
+    }
 }
 
 /// Zero all buffers entirely.
 #[no_mangle]
 pub extern "C" fn lko_kv_arena_zero_all(arena: *mut LKOKVArena) {
-    if arena.is_null() { return; }
-    unsafe { (*arena).zero_all(); }
+    if arena.is_null() {
+        return;
+    }
+    unsafe {
+        (*arena).zero_all();
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────
@@ -648,8 +693,20 @@ mod tests {
         for h in 0..4 {
             let base = h * max_s * hd + 5 * hd;
             for i in 0..hd {
-                assert_eq!(k0[base + i], k_data[h * hd + i], "K mismatch h={} i={}", h, i);
-                assert_eq!(v0[base + i], v_data[h * hd + i], "V mismatch h={} i={}", h, i);
+                assert_eq!(
+                    k0[base + i],
+                    k_data[h * hd + i],
+                    "K mismatch h={} i={}",
+                    h,
+                    i
+                );
+                assert_eq!(
+                    v0[base + i],
+                    v_data[h * hd + i],
+                    "V mismatch h={} i={}",
+                    h,
+                    i
+                );
             }
         }
 
@@ -744,9 +801,14 @@ mod tests {
                 let h_base = h * max_s * hd;
                 for pos in 0..3usize {
                     let off = h_base + pos * hd;
-                    assert_eq!(&a_k[layer][off..off + hd],
-                               &b_k[layer][off..off + hd],
-                               "K mismatch layer={} pos={} h={}", layer, pos, h);
+                    assert_eq!(
+                        &a_k[layer][off..off + hd],
+                        &b_k[layer][off..off + hd],
+                        "K mismatch layer={} pos={} h={}",
+                        layer,
+                        pos,
+                        h
+                    );
                 }
             }
         }
@@ -807,7 +869,13 @@ mod tests {
         assert_eq!(lko_kv_arena_is_ready(arena), 1);
 
         let data = make_buffer(n_kv * hd);
-        lko_kv_arena_write(arena, 0, 3, data.as_ptr() as *const c_void, data.as_ptr() as *const c_void);
+        lko_kv_arena_write(
+            arena,
+            0,
+            3,
+            data.as_ptr() as *const c_void,
+            data.as_ptr() as *const c_void,
+        );
 
         lko_kv_arena_set_seq_len(arena, 4);
         assert_eq!(lko_kv_arena_get_seq_len(arena), 4);

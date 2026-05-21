@@ -1,0 +1,9 @@
+{"prompt_id":"factual_qa_001","category":"factual_qa","task_profile":"general","prompt":"The capital of France is"}
+{"prompt_id":"reasoning_001","category":"reasoning","task_profile":"general","prompt":"All roses are flowers. Some flowers fade quickly. What follows?"}
+{"prompt_id":"coding_001","category":"coding","task_profile":"general","prompt":"Write a Python factorial function."}
+{"prompt_id":"math_001","category":"math","task_profile":"general","prompt":"If 3x + 5 = 20, what is x?"}
+{"prompt_id":"summarization_001","category":"summarization","task_profile":"general","prompt":"Summarize why exercise matters."}
+{"prompt_id":"japanese_chat_001","category":"japanese_chat","task_profile":"general","prompt":"日本語で短く自己紹介してください。"}
+{"prompt_id":"english_chat_001","category":"english_chat","task_profile":"general","prompt":"Please introduce yourself briefly in friendly English."}
+{"prompt_id":"instruction_001","category":"instruction","task_profile":"general","prompt":"Give three study focus tips."}
+{"prompt_id":"story_001","category":"story","task_profile":"general","prompt":"Start a story about a lost key."}

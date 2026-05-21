@@ -29,6 +29,14 @@ So the bottleneck has shifted from "model is broken" to:
 
 > "why are reduced expert count and reduced bytes not showing up as proportional wall-clock wins?"
 
+As of 2026-05-20 there is one important refinement:
+
+> Fused routed MoE is fast in both direct runner microbench and replay microbench with real E2E hidden states, but 1-token E2E still regresses.
+
+So the current bottleneck hypothesis has narrowed from "MoE kernel is still bad" to:
+
+> integration overhead or timing/accounting around `call_moe`
+
 ## Stable Baseline
 
 Reference checkpoint:

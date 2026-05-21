@@ -1,0 +1,16 @@
+{
+  "name": "example-runtime-profile",
+  "target": "m1_8gb",
+  "notes": "Opt-in runtime tuning example. Default behavior is unchanged unless this is explicitly loaded.",
+  "policy_kind": "exact",
+  "knobs": {
+    "backend": "legacy",
+    "moe_top_p": 1.0,
+    "moe_min_experts": 8,
+    "moe_max_experts": 8,
+    "resident_cache_capacity_bytes": 3221225472,
+    "residency_group_size": 1,
+    "group_preresolve_top_n": 0,
+    "group_preresolve_max_bytes": 0
+  }
+}

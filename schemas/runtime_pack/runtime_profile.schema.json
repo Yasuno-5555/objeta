@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Objeta AOT Runtime Profile",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "profile_name",
+    "target",
+    "backend",
+    "policy_kind",
+    "moe_top_p",
+    "moe_min_experts",
+    "moe_max_experts",
+    "resident_cache_capacity_bytes",
+    "group_preresolve_top_n",
+    "group_preresolve_max_bytes",
+    "source_model"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "profile_name": { "type": "string" },
+    "target": { "type": "string" },
+    "backend": { "type": "string" },
+    "policy_kind": { "type": "string", "enum": ["exact", "top_p", "lko_aware"] },
+    "moe_top_p": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "moe_min_experts": { "type": "integer", "minimum": 0 },
+    "moe_max_experts": { "type": "integer", "minimum": 0 },
+    "resident_cache_capacity_bytes": { "type": "integer", "minimum": 0 },
+    "group_preresolve_top_n": { "type": "integer", "minimum": 0 },
+    "group_preresolve_max_bytes": { "type": "integer", "minimum": 0 },
+    "source_model": { "type": "string" },
+    "source_calibration": { "type": ["string", "null"] }
+  }
+}

@@ -1,71 +1,283 @@
-# objeta Handoff — 2026-05-19 (Update 3)
+# objeta Handoff — 2026-05-21
 
-## Current Status
+## Current Truth
 
-We have achieved **complete exact parity (cosine similarity >= 0.9995) across all 40 layers and all multi-token positions (up to pos=4)** between the Hugging Face reference execution and the Rust executor. 
+- `safe_exact` chat-template path is still the executor correctness baseline.
+- Heavy validation is **sequential only**.
+- Do **not** run `scripts/check_all.sh`.
+- Full oracle sweeps are reserved for semantic changes.
+- `objeta-aot` now supports:
+  - real SafeTensors index parsing
+  - packed Qwen3.6 expert layout parsing
+  - calibration trace analysis
+  - residency planning
+  - runtime pack generation
+  - specialization pack generation
+- `objeta-qwen36-executor` now supports:
+  - runtime pack loading
+  - importance-aware eviction
+  - runtime profile loading
+  - governor disabled / observe-only / safety-only / offensive-v0 modes
 
-Furthermore, **end-to-end text generation has been verified as fully operational and producing correct, fluent language**, resolving the previous token collapse bug (where it was outputting garbage tokens like `买到` / `骨折`).
+## Most Important Recent Changes
 
----
+### 1. Real Qwen3.6 packed expert layout parsing works
 
-## End-to-End Output Verification
+Real Qwen3.6 checkpoint tensors such as:
 
-We ran a 25-token greedy generation test (`--temperature 0.0`) on the prompt `"The capital of France is"` using the Rust executor:
-
-```bash
-python3 -u experiments/qwen36_full_rust.py 1.0 1 --warmup-tokens 0 --max-tokens 25 --temperature 0.0 --prompt 'The capital of France is'
+```text
+model.language_model.layers.X.mlp.experts.gate_up_proj
+model.language_model.layers.X.mlp.experts.down_proj
 ```
 
-### Result:
-- **Output**: `Here's a thinking process:\n\n1.  **Analyze User Input:** The user asks "The capital of France is`
-- **Behavior**: The model outputs perfectly natural, grammatically correct English. The token collapse is 100% resolved.
+are now treated as **packed expert layers**, not parser failures.
 
----
+Current AOT layout truth:
 
-## Technical Findings & Monkey Patching
+- `layout_kind = packed_experts`
+- `packed_expert_layers = 40`
+- `logical_routed_expert_count = 10240`
 
-### 1. The GQA Q_proj Split Layout Resolved
-We verified from the `transformers` codebase that the Rust assumptions were correct: `q_proj` outputs the Query and Sigmoid Gate interleaved by head (`[query(256), gate(256)]` per head), which are chunked. We corrected `a1_full_compare.py` to match this layout, aligning Layer 3 perfectly on token 0.
+This fixed the old bogus state:
 
-### 2. Stateful MoE Parity (Bypassing Routed Experts)
-To get exact multi-token parity, we monkey-patched the Hugging Face model (`Qwen3_5MoeSparseMoeBlock`) to skip routed experts, mirroring Rust's `moe_enabled: 0` (Shared Expert only) state.
-This allowed direct validation of the residual streams without quantized MoE variance:
+- routed experts = `0`
+- coverage = `58900%`
 
-```python
-# Monkey-patch MoE blocks to skip routed experts (matching Rust's moe_enabled: 0)
-import types
-def patched_forward(self, hidden_states: torch.Tensor):
-    batch_size, sequence_length, hidden_dim = hidden_states.shape
-    hidden_states_reshaped = hidden_states.view(-1, hidden_dim)
-    shared_expert_output = self.shared_expert(hidden_states_reshaped)
-    
-    shared_expert_gate_val = torch.sigmoid(self.shared_expert_gate(hidden_states_reshaped))
-    shared_expert_output = shared_expert_gate_val * shared_expert_output
-    
-    expert_output = shared_expert_output.reshape(batch_size, sequence_length, hidden_dim)
-    return expert_output
+### 2. Real calibration trace generation exists
 
-for layer in model.model.layers:
-    layer.mlp.forward = types.MethodType(patched_forward, layer.mlp)
-```
+New files:
 
----
+- [calib/prompts/general.jsonl](/Users/yasuno/projects/objeta/calib/prompts/general.jsonl)
+- [experiments/generate_calib_trace.py](/Users/yasuno/projects/objeta/experiments/generate_calib_trace.py)
 
-## Parity Results (Stateful Multi-Token Run)
+The generator:
 
-When running `a1_full_compare.py`, the hidden state cosine similarity stays near perfect across all layers for all token steps:
+- runs prompts sequentially through `qwen36_full_rust.py`
+- reads `moe_stats.json`
+- emits AOT-friendly calibration JSONL with:
+  - `prompt_id`
+  - `task_profile`
+  - `phase`
+  - `token_id`
+  - `layer`
+  - `selected_experts`
+  - `selected_weights`
+  - `routing_mass_kept_pre_renorm`
+  - `routing_mass_dropped_pre_renorm`
 
-- **Token 0 (seq_len=1)**: final `cos=0.992732` (minimum `0.972579` at L31)
-- **Token 1 (seq_len=2)**: final `cos=0.999572` (minimum `0.999535` at L36)
-- **Token 2 (seq_len=3)**: final `cos=0.999858` (minimum `0.999801` at L34)
-- **Token 3 (seq_len=4)**: final `cos=0.999818` (minimum `0.999801` at L35)
-- **Token 4 (seq_len=5)**: final `cos=0.999875` (minimum `0.999868` at L34)
+### 3. `moe_io_events` now include `selected_weights`
 
-This verifies both **prefill computation** and **incremental state progression (KV cache / Conv1d ring buffers)** are functioning perfectly.
+This was a real telemetry gap that blocked calibration reuse.
 
----
+Updated:
 
-## Recommended Next Steps
+- [crates/objeta-qwen36-executor/src/moe_stats.rs](/Users/yasuno/projects/objeta/crates/objeta-qwen36-executor/src/moe_stats.rs)
+- [crates/objeta-qwen36-executor/src/qwen36_forward.rs](/Users/yasuno/projects/objeta/crates/objeta-qwen36-executor/src/qwen36_forward.rs)
 
-1. **Verify Routed MoE Parity (Optional)**: If routed MoE is to be enabled, we will need to enable `moe_enabled: 1` in Rust and compare the router output logits and routing indices. (Note: Rust uses 4-bit quantized expert weights, so exact `1.000000` parity will not be possible, but cosine similarity should be around `0.996`).
-2. **Metal GQA Kernel Parity**: Now that CPU-fallback GQA is fully aligned, the Metal GQA kernel should be revised to ensure it implements identical GQA layout calculations, after which it can be re-enabled.
+This is **telemetry-only**, not math-changing.
+
+### 4. M1 quant planning no longer emits `iq3`
+
+`precision_pass` now respects target quant preferences.
+
+Result:
+
+- `m1-8gb` falls back cold transport experts to `q4`
+- `rtx3070-8gb-vram-32gb-ram` may still emit `iq3`
+
+So:
+
+- `iq3` is now a **real RTX candidate**
+- not a Metal / M1 recommendation
+
+## Real Calibration Coverage Status
+
+### Earlier short trace
+
+- calibrated experts: `5486`
+- logical total experts: `10240`
+- coverage: `53.57%`
+
+### Current fuller trace
+
+Generated from remaining categories:
+
+- `summarization`
+- `japanese_chat`
+- `english_chat`
+- `instruction`
+- `story`
+
+Current full trace artifacts:
+
+- `/tmp/qwen36_calib_trace_general_full.jsonl`
+- `/tmp/qwen36_calib_trace_general_full_summary.json`
+
+Current coverage:
+
+- prompt_count: `5` newly added in the extension batch
+- event_count: `9560`
+- unique experts: `6781`
+- logical total experts: `10240`
+- overall coverage: **`66.22%`**
+
+Per-layer coverage:
+
+- min: `54.69%`
+- median: `66.02%`
+- max: `86.72%`
+
+Newly discovered experts per batch:
+
+- `summarization`: `378`
+- `japanese_chat`: `349`
+- `english_chat`: `171`
+- `instruction`: `110`
+- `story`: `287`
+
+## Current Specialization Outputs
+
+### M1 8GB conservative
+
+Pack:
+
+- `/tmp/qwen36-specialize-m1-conservative-full.objeta`
+
+Key results:
+
+- calibrated experts: `6781`
+- coverage: `66.22%`
+- pruning: **disabled**
+- `protect = 610`
+- `keep = 5035`
+- `cold_tier = 1136`
+- `compress = 0`
+- `prune_candidate = 0`
+- estimated routing mass loss: `0.0`
+- backend: `fused_row_parallel`
+- resident cache capacity: `3GB`
+
+Quant counts:
+
+- `q8 = 40`
+- `q5 = 1131`
+- `q4 = 5650`
+- `iq3 = 0`
+
+### RTX3070 8GB VRAM / 32GB RAM balanced
+
+Pack:
+
+- `/tmp/qwen36-specialize-rtx3070-balanced-full.objeta`
+
+Key results:
+
+- calibrated experts: `6781`
+- coverage: `66.22%`
+- pruning: **disabled**
+- `protect = 610`
+- `keep = 5035`
+- `cold_tier = 1136`
+- `compress = 0`
+- `prune_candidate = 0`
+- estimated routing mass loss: `0.0`
+- backend: `cuda_fused`
+- resident cache capacity: `8GB`
+
+Quant counts:
+
+- `q8 = 40`
+- `q5 = 1131`
+- `q4 = 3095`
+- `iq3 = 2555`
+
+## Why pruning is still disabled
+
+This is still healthy behavior.
+
+Current gating picture:
+
+- coverage is better, but not yet at the pruning gate
+- routing mass loss estimates are still conservative
+- reports still mark:
+  - `estimated_only = yes`
+  - `requires_verification = yes`
+
+So the compiler is doing the right thing by refusing to become overly bold.
+
+## Runtime Pack Loader / Executor Status
+
+Runtime pack loading is live in executor:
+
+- env: `OBJETA_RUNTIME_PACK_PATH=/path/to/pack`
+- FFI: `lko_runner_load_runtime_pack(runner, pack_path)`
+
+Applied in v0:
+
+- `runtime_profile.json`
+- `expert_importance.json`
+- `residency_plan.json`
+
+Read-only metadata in v0:
+
+- `phase_policy.json`
+- `expert_coresidency.json`
+
+Importance-aware eviction is enabled when loaded importance is non-empty.
+
+Eviction order with priorities:
+
+1. `Cold`
+2. `Unknown`
+3. `Warm`
+4. `Hot`
+
+Tie-break:
+
+1. lower importance first
+2. older `last_used_token` first
+
+## Governor Status
+
+Governor modes currently exist:
+
+- `Disabled`
+- `ObserveOnly`
+- `ApplyAtTokenBoundary`
+- offensive mode v0 behind `OBJETA_GOVERNOR_OFFENSIVE=1`
+
+Important caveat:
+
+- offensive mode is implemented
+- but current real runs are still mostly blocked by memory/IO hard risk
+- so offensive actions have often stayed at `0`
+
+This is not a bug by itself; it means the governor is still mostly defensive on M1-class memory pressure.
+
+## Operational Rules
+
+- Never run `scripts/check_all.sh`
+- Avoid parallel heavy runs
+- For runtime / executor changes:
+  1. `cargo build -p objeta-qwen36-executor`
+  2. `cargo test -p objeta-qwen36-executor`
+  3. light smoke only
+  4. full oracles only for semantic changes
+- For AOT changes:
+  1. `cargo test -p objeta-aot`
+  2. `cargo build -p objeta-aot`
+  3. specialize smoke on real checkpoint if parser/report semantics changed
+
+## Next Recommended Steps
+
+1. Extend calibration corpus again with more routing-diverse prompts
+   - especially `factual_qa`, `coding`, `japanese_chat`
+2. Push coverage from `66.22%` toward `80%+`
+3. Re-run specialize once coverage crosses the pruning gate
+4. Only then evaluate whether `compress` / `prune_candidate` become meaningful
+
+## Caveats to Remember
+
+- `qwen36_ffi.rs` is active in the current tree. Do not rely on older notes claiming it was removed.
+- AOT reports are now structurally trustworthy for real Qwen3.6 packed layout.
+- But specialization outputs are still **advisory** until verification runner work lands.

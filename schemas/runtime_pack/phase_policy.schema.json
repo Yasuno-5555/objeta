@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Objeta Phase Policy",
+  "type": "object",
+  "required": ["schema_version", "layers"],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "layers": { "type": "array" }
+  }
+}

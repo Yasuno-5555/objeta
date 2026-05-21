@@ -1,0 +1,45 @@
+[transformers] PyTorch was not found. Models won't be available and only tokenizers, configuration and file/data utilities can be used.
+[objeta] lm_head loaded from lm_head.bin
+[objeta] Metal GQA: disabled pending kernel parity, using CPU fallback
+TIMING: delta=713ms gqa=191ms shared=100ms moe=1430ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+Loading strategy config from configs/fast_top_p_090.json
+Strategy: ΔN=100% (30/30 layers), MoE on ΔN=yes
+Skipping OS page cache warmup for smoke test
+Vocab: 248044
+
+── Prompt: "The capital of France is" ──
+Prefilling 15 tokens...
+  [1/15] 6s
+[DEBUG TopP] l=0 step=1 p=0.9 min=2 max=8 items=[(238, 0.26097435), (112, 0.22741401), (200, 0.12648807), (173, 0.11166119), (43, 0.091871515), (95, 0.09155996), (139, 0.059095584), (30, 0.030935293)]
+[DEBUG TopP] kept=6
+TIMING: delta=851ms gqa=230ms shared=108ms moe=818ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=886ms gqa=236ms shared=107ms moe=1290ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=832ms gqa=210ms shared=104ms moe=1102ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=859ms gqa=233ms shared=103ms moe=1326ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=964ms gqa=239ms shared=105ms moe=1095ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+  [6/15] 32s
+TIMING: delta=908ms gqa=215ms shared=105ms moe=1068ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=849ms gqa=222ms shared=99ms moe=970ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=952ms gqa=221ms shared=105ms moe=1214ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=877ms gqa=241ms shared=101ms moe=1116ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=1180ms gqa=249ms shared=129ms moe=846ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+  [11/15] 60s
+TIMING: delta=982ms gqa=223ms shared=112ms moe=1253ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=978ms gqa=235ms shared=106ms moe=1191ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=1073ms gqa=233ms shared=109ms moe=1208ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=1026ms gqa=219ms shared=116ms moe=818ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+  [15/15] 82s
+TIMING: delta=895ms gqa=234ms shared=112ms moe=905ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+  Prefill done in 82.3s
+  [1/5] 6s (0.18 tok/s)
+TIMING: delta=958ms gqa=243ms shared=117ms moe=949ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=922ms gqa=211ms shared=104ms moe=1348ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=2509ms gqa=567ms shared=283ms moe=2710ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+TIMING: delta=2144ms gqa=650ms shared=303ms moe=1835ms | scheduler: full=40 collapse=0 moe_collapse=0 fusion=1.00
+  [5/5] 37s (0.14 tok/s)
+
+  5 tokens in 37.0s (0.14 tok/s)
+  Output: Here's a thinking process
+
+Written run summary to runs/run_20260520_181047_271937/summary.json
+Updated runs/summary.json

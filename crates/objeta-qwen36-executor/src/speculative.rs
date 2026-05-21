@@ -49,13 +49,13 @@ pub struct SpecState {
     phase: SpecPhase,
 
     // Position tracking
-    position: u32,       // next write position in KV cache
-    current_token: u32,  // token to feed for next draft step
+    position: u32,      // next write position in KV cache
+    current_token: u32, // token to feed for next draft step
 
     // Fixed buffers
-    draft_tokens: [u32; MAX_GAMMA],      // gamma draft tokens
-    draft_positions: [u32; MAX_GAMMA],   // positions for each draft token
-    verify_tokens: [u32; MAX_GAMMA],     // gamma tokens for verify (always full)
+    draft_tokens: [u32; MAX_GAMMA],        // gamma draft tokens
+    draft_positions: [u32; MAX_GAMMA],     // positions for each draft token
+    verify_tokens: [u32; MAX_GAMMA],       // gamma tokens for verify (always full)
     accepted_tokens: [u32; MAX_GAMMA + 1], // accepted + possible rejection replacement
 
     // Stats
@@ -181,11 +181,7 @@ impl SpecState {
     /// `accepted_token_count` = num_accepted + (0 if all accepted else 1).
     ///
     /// Caller reads `accepted_tokens()` to get the result.
-    pub fn accept_reject(
-        &mut self,
-        target_logits: &[f32],
-        prefill_logits: &[f32],
-    ) -> (u32, u32) {
+    pub fn accept_reject(&mut self, target_logits: &[f32], prefill_logits: &[f32]) -> (u32, u32) {
         let vocab = self.vocab_size as usize;
         let gamma = self.gamma as usize;
         let mut num_accepted: u32 = 0;
@@ -308,29 +304,41 @@ pub extern "C" fn lko_spec_create(gamma: c_int, vocab_size: c_int) -> *mut LKOSp
 #[no_mangle]
 pub extern "C" fn lko_spec_destroy(state: *mut LKOSpecState) {
     if !state.is_null() {
-        unsafe { drop(Box::from_raw(state)); }
+        unsafe {
+            drop(Box::from_raw(state));
+        }
     }
 }
 
 /// Begin prefill.
 #[no_mangle]
 pub extern "C" fn lko_spec_begin_prefill(state: *mut LKOSpecState) {
-    if state.is_null() { return; }
-    unsafe { (*state).begin_prefill(); }
+    if state.is_null() {
+        return;
+    }
+    unsafe {
+        (*state).begin_prefill();
+    }
 }
 
 /// Get next prefill position.
 #[no_mangle]
 pub extern "C" fn lko_spec_prefill_position(state: *mut LKOSpecState) -> u32 {
-    if state.is_null() { return 0; }
+    if state.is_null() {
+        return 0;
+    }
     unsafe { (*state).prefill_next_position() }
 }
 
 /// Mark prefill token done.
 #[no_mangle]
 pub extern "C" fn lko_spec_prefill_done(state: *mut LKOSpecState, first_token: u32) {
-    if state.is_null() { return; }
-    unsafe { (*state).prefill_done(first_token); }
+    if state.is_null() {
+        return;
+    }
+    unsafe {
+        (*state).prefill_done(first_token);
+    }
 }
 
 /// Begin draft phase. Returns starting token via `token_out` and position via `pos_out`.
@@ -340,24 +348,42 @@ pub extern "C" fn lko_spec_begin_draft(
     token_out: *mut u32,
     pos_out: *mut u32,
 ) {
-    if state.is_null() { return; }
+    if state.is_null() {
+        return;
+    }
     let (token, pos) = unsafe { (*state).begin_draft() };
-    if !token_out.is_null() { unsafe { *token_out = token; } }
-    if !pos_out.is_null() { unsafe { *pos_out = pos; } }
+    if !token_out.is_null() {
+        unsafe {
+            *token_out = token;
+        }
+    }
+    if !pos_out.is_null() {
+        unsafe {
+            *pos_out = pos;
+        }
+    }
 }
 
 /// Record one draft token.
 #[no_mangle]
 pub extern "C" fn lko_spec_draft_token(state: *mut LKOSpecState, index: u32, token: u32) {
-    if state.is_null() { return; }
-    unsafe { (*state).draft_token(index, token); }
+    if state.is_null() {
+        return;
+    }
+    unsafe {
+        (*state).draft_token(index, token);
+    }
 }
 
 /// Mark draft phase complete.
 #[no_mangle]
 pub extern "C" fn lko_spec_draft_done(state: *mut LKOSpecState) {
-    if state.is_null() { return; }
-    unsafe { (*state).draft_done(); }
+    if state.is_null() {
+        return;
+    }
+    unsafe {
+        (*state).draft_done();
+    }
 }
 
 /// Get verify information.
@@ -371,16 +397,22 @@ pub extern "C" fn lko_spec_get_verify(
     tokens_out: *mut u32,
     pos_out: *mut u32,
 ) -> u32 {
-    if state.is_null() { return 0; }
+    if state.is_null() {
+        return 0;
+    }
     let s = unsafe { &*state };
     let tokens = s.get_verify_tokens();
     if !tokens_out.is_null() {
         for (i, &t) in tokens.iter().enumerate() {
-            unsafe { *tokens_out.add(i) = t; }
+            unsafe {
+                *tokens_out.add(i) = t;
+            }
         }
     }
     if !pos_out.is_null() {
-        unsafe { *pos_out = s.get_verify_position(); }
+        unsafe {
+            *pos_out = s.get_verify_position();
+        }
     }
     tokens.len() as u32
 }
@@ -397,7 +429,9 @@ pub extern "C" fn lko_spec_accept_reject(
     prefill_logits: *const c_float,
     accepted_out: *mut u32,
 ) -> u32 {
-    if state.is_null() { return 0; }
+    if state.is_null() {
+        return 0;
+    }
     let s = unsafe { &mut *state };
     let vocab = s.vocab_size as usize;
     let gamma = s.gamma as usize;
@@ -409,7 +443,9 @@ pub extern "C" fn lko_spec_accept_reject(
     if !accepted_out.is_null() {
         let accepted = s.accepted_tokens_slice();
         for (i, &t) in accepted.iter().enumerate() {
-            unsafe { *accepted_out.add(i) = t; }
+            unsafe {
+                *accepted_out.add(i) = t;
+            }
         }
     }
 
@@ -419,28 +455,36 @@ pub extern "C" fn lko_spec_accept_reject(
 /// Get current token for next iteration.
 #[no_mangle]
 pub extern "C" fn lko_spec_current_token(state: *mut LKOSpecState) -> u32 {
-    if state.is_null() { return 0; }
+    if state.is_null() {
+        return 0;
+    }
     unsafe { (*state).current_token() }
 }
 
 /// Get current position.
 #[no_mangle]
 pub extern "C" fn lko_spec_position(state: *mut LKOSpecState) -> u32 {
-    if state.is_null() { return 0; }
+    if state.is_null() {
+        return 0;
+    }
     unsafe { (*state).position() }
 }
 
 /// Check if done (EOS or max_tokens reached).
 #[no_mangle]
 pub extern "C" fn lko_spec_is_done(state: *mut LKOSpecState) -> c_int {
-    if state.is_null() { return 1; }
+    if state.is_null() {
+        return 1;
+    }
     unsafe { (*state).is_done() as c_int }
 }
 
 /// Get accept rate × 100 (integer percentage).
 #[no_mangle]
 pub extern "C" fn lko_spec_accept_rate(state: *mut LKOSpecState) -> c_int {
-    if state.is_null() { return 0; }
+    if state.is_null() {
+        return 0;
+    }
     unsafe { ((*state).accept_rate() * 100.0) as c_int }
 }
 
@@ -506,7 +550,8 @@ mod tests {
         // target_logits[0]: argmax=3 (verifies draft[1])
         // target_logits[1]: argmax=4 (verifies draft[2])
         let vocab = 10;
-        let mut prefill = vec![0.0f32; vocab]; prefill[2] = 100.0;
+        let mut prefill = vec![0.0f32; vocab];
+        prefill[2] = 100.0;
         let mut tlogits = vec![0.0f32; 3 * vocab];
         tlogits[0 * vocab + 3] = 100.0;
         tlogits[1 * vocab + 4] = 100.0;
@@ -533,7 +578,8 @@ mod tests {
         state.draft_done();
 
         let vocab = 10;
-        let mut prefill = vec![0.0f32; vocab]; prefill[7] = 100.0; // target says 7
+        let mut prefill = vec![0.0f32; vocab];
+        prefill[7] = 100.0; // target says 7
         let mut tlogits = vec![0.0f32; 3 * vocab];
 
         let (n_acc, count) = state.accept_reject(&tlogits, &prefill);

@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/objeta-aot",
     "crates/objeta-core",
     "crates/objeta-parser",
     "crates/objeta-analysis",

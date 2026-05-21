@@ -1,0 +1,12 @@
+{
+  "mode": "observe_only",
+  "trace_path": "/tmp/governor_trace.jsonl",
+  "policy": {
+    "high_entropy_threshold": 2.25,
+    "critical_entropy_threshold": 2.75,
+    "high_memory_pressure_ratio": 0.9,
+    "critical_memory_pressure_ratio": 0.98,
+    "io_thrash_miss_threshold": 8,
+    "io_thrash_loaded_bytes_threshold": 67108864
+  }
+}

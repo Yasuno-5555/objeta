@@ -1,18 +1,30 @@
+#![recursion_limit = "512"]
+
 //! objeta Qwen3.6 executor — Rust SIMD + Metal GPU dispatch.
 
-pub mod metal_dispatch;
 pub mod attention;
+pub mod expert_cache;
+pub mod metal_dispatch;
+pub mod os_telemetry;
 pub mod qwen36_forward;
+pub mod runtime_pack;
+pub mod runtime_governor;
+pub mod runtime_profile;
+pub mod runtime_tuner;
 pub mod strategy;
+pub mod moe_stats;
+pub mod runner_governor;
+pub mod runner_residency;
+pub mod qwen36_ffi;
 
-mod quantize;
-pub mod kv_arena;
-pub mod speculative;
 pub mod expert_store;
+pub mod kv_arena;
 pub mod moe_dispatch;
+mod quantize;
+pub mod speculative;
 
-pub use kv_arena::KVArena;
 pub use expert_store::ExpertStore;
+pub use kv_arena::KVArena;
 
 use std::collections::HashMap;
 use std::ffi::CStr;
@@ -31,7 +43,7 @@ pub enum Error {
 /// A registered weight buffer — pointer + size on the GPU.
 #[derive(Clone, Debug)]
 pub struct WeightBuffer {
-    pub ptr: u64,        // GPU device pointer
+    pub ptr: u64, // GPU device pointer
     pub size_bytes: u64,
 }
 
@@ -67,7 +79,8 @@ impl Executor {
 
     /// Register a weight buffer (pointer from MLX array).
     pub fn register_buffer(&mut self, name: &str, ptr: u64, size_bytes: u64) {
-        self.buffers.insert(name.to_string(), WeightBuffer { ptr, size_bytes });
+        self.buffers
+            .insert(name.to_string(), WeightBuffer { ptr, size_bytes });
     }
 
     /// Set layer config.
@@ -77,9 +90,10 @@ impl Executor {
 
     /// Get a registered buffer by name.
     pub fn get_buffer(&self, name: &str) -> Result<WeightBuffer, Error> {
-        self.buffers.get(name).cloned().ok_or_else(|| {
-            Error::BufferNotFound(format!("Buffer '{}' not registered", name))
-        })
+        self.buffers
+            .get(name)
+            .cloned()
+            .ok_or_else(|| Error::BufferNotFound(format!("Buffer '{}' not registered", name)))
     }
 }
 
@@ -99,7 +113,9 @@ pub extern "C" fn lko_executor_create() -> *mut LKOExecutor {
 #[no_mangle]
 pub extern "C" fn lko_executor_destroy(exec: *mut LKOExecutor) {
     if !exec.is_null() {
-        unsafe { drop(Box::from_raw(exec)); }
+        unsafe {
+            drop(Box::from_raw(exec));
+        }
     }
 }
 

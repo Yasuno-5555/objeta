@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Objeta Residency Plan",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "target",
+    "resident_cache_capacity_bytes",
+    "initial_hot_experts",
+    "eviction_priority"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "target": { "type": "string" },
+    "resident_cache_capacity_bytes": { "type": "integer", "minimum": 0 },
+    "initial_hot_experts": { "type": "array" },
+    "eviction_priority": { "type": "array" }
+  }
+}

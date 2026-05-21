@@ -23,7 +23,9 @@ fn quantize_q40_block(src: &[f32; 32], dst: &mut [u8; 18]) {
     let mut amax = 0.0f32;
     for &v in src.iter() {
         let abs = v.abs();
-        if abs > amax { amax = abs; }
+        if abs > amax {
+            amax = abs;
+        }
     }
     let scale = if amax > 0.0 { amax / 7.0 } else { 1e-10 };
     let d = scale;
@@ -49,7 +51,11 @@ fn half_to_u32(val: f32) -> u32 {
     let exp = ((bits >> 23) & 0xFF) as i32 - 127 + 15;
     let mant = (bits >> 13) & 0x3FF;
     if exp <= 0 {
-        if mant == 0 { sign } else { sign | (mant >> 1) }
+        if mant == 0 {
+            sign
+        } else {
+            sign | (mant >> 1)
+        }
     } else if exp >= 31 {
         sign | 0x7C00 | mant
     } else {
@@ -69,7 +75,7 @@ const SUB_SIZE: usize = 32;
 
 /// Quantize one block of 256 floats to Q4_K_APPL (160 bytes).
 fn quantize_q4k_appl_block(src: &[f32; QK_K], dst: &mut [u8; 160]) {
-    let mut scales = [0u16; N_SUB];  // f16 bits
+    let mut scales = [0u16; N_SUB]; // f16 bits
     let mut mins = [0u16; N_SUB];
     let mut L = [0u8; QK_K];
 
@@ -78,8 +84,12 @@ fn quantize_q4k_appl_block(src: &[f32; QK_K], dst: &mut [u8; 160]) {
         let mut maxv = sub[0];
         let mut minv = sub[0];
         for &v in sub {
-            if v > maxv { maxv = v; }
-            if v < minv { minv = v; }
+            if v > maxv {
+                maxv = v;
+            }
+            if v < minv {
+                minv = v;
+            }
         }
         let span = maxv - minv;
         let scale = if span > 1e-10 { span / 15.0 } else { 1e-10 };
@@ -128,8 +138,12 @@ fn quantize_q5k_appl_block(src: &[f32; QK_K], dst: &mut [u8; 192]) {
         let mut maxv = sub[0];
         let mut minv = sub[0];
         for &v in sub {
-            if v > maxv { maxv = v; }
-            if v < minv { minv = v; }
+            if v > maxv {
+                maxv = v;
+            }
+            if v < minv {
+                minv = v;
+            }
         }
         let span = maxv - minv;
         let scale = if span > 1e-10 { span / 31.0 } else { 1e-10 };
@@ -184,7 +198,9 @@ pub extern "C" fn lko_quantize_q40(
     let block_bytes = 18usize;
     let total_bytes = m * num_blocks * block_bytes;
 
-    unsafe { *out_size = total_bytes as i64; }
+    unsafe {
+        *out_size = total_bytes as i64;
+    }
 
     let src = unsafe { std::slice::from_raw_parts(data, m * ncols) };
     let mut out = vec![0u8; total_bytes];
@@ -219,7 +235,9 @@ fn quantize_q4k_appl_v2_block(src: &[f32; QK_K], dst: &mut [u8; 144]) {
         let mut amax = 0.0f32;
         for i in 0..32 {
             let a = src[sub_start + i].abs();
-            if a > amax { amax = a; }
+            if a > amax {
+                amax = a;
+            }
         }
         let scale = if amax > 1e-10 { amax / 7.5 } else { 1e-10 };
         let sf16 = half_to_u16(scale);
@@ -244,7 +262,7 @@ fn quantize_q4k_appl_v2_block(src: &[f32; QK_K], dst: &mut [u8; 144]) {
 
 // ── Q4_K_APPL dequantize ─────────────────────────────────────────────
 
-const Q4K_BLOCK: usize = 256;       // numbers per block
+const Q4K_BLOCK: usize = 256; // numbers per block
 const Q4K_BLOCK_BYTES: usize = 160; // bytes per block (Q4_K_APPL)
 
 /// Dequantize one Q4_K_APPL block (160 bytes → 256 f32).
@@ -277,7 +295,8 @@ fn dequantize_q4k_appl_block(src: &[u8; 160], dst: &mut [f32; 256]) {
     }
 
     for j in 0..N_SUB {
-        let s = scales[j]; let m = mins[j];
+        let s = scales[j];
+        let m = mins[j];
         for i in 0..SUB_SIZE {
             dst[j * SUB_SIZE + i] = L[j * SUB_SIZE + i] as f32 * s + m;
         }
@@ -341,7 +360,9 @@ pub extern "C" fn lko_quantize_q4k_appl_v2_bulk(
         total_out += nbytes;
     }
 
-    unsafe { *out_size = total_out as i64; }
+    unsafe {
+        *out_size = total_out as i64;
+    }
 
     let src = unsafe { std::slice::from_raw_parts(data, data_off) };
     let mut out = vec![0u8; total_out];
@@ -412,7 +433,7 @@ pub extern "C" fn lko_quantize_q4k_appl(
     }
 
     let ptr = out.as_mut_ptr();
-    std::mem::forget(out);  // caller must free
+    std::mem::forget(out); // caller must free
     ptr
 }
 
@@ -431,7 +452,9 @@ pub extern "C" fn lko_quantize_q5k_appl(
     let block_bytes = 192usize;
     let total_bytes = m * num_blocks * block_bytes;
 
-    unsafe { *out_size = total_bytes as i64; }
+    unsafe {
+        *out_size = total_bytes as i64;
+    }
 
     let src = unsafe { std::slice::from_raw_parts(data, m * ncols) };
     let mut out = vec![0u8; total_bytes];
@@ -485,7 +508,9 @@ pub extern "C" fn lko_quantize_q4k_appl_bulk(
         total_out += nbytes;
     }
 
-    unsafe { *out_size = total_out as i64; }
+    unsafe {
+        *out_size = total_out as i64;
+    }
 
     let src = unsafe { std::slice::from_raw_parts(data, data_offset) };
     let mut out = vec![0u8; total_out];
@@ -500,7 +525,8 @@ pub extern "C" fn lko_quantize_q4k_appl_bulk(
 
         for row in 0..rows {
             let mut padded = vec![0.0f32; k_padded];
-            padded[..cols].copy_from_slice(&src[data_off + row * cols..data_off + (row + 1) * cols]);
+            padded[..cols]
+                .copy_from_slice(&src[data_off + row * cols..data_off + (row + 1) * cols]);
 
             for b in 0..num_blocks {
                 let mut block = [0.0f32; QK_K];
@@ -548,8 +574,12 @@ fn quantize_q2k_appl_block(src: &[f32; QK_K], dst: &mut [u8; Q2K_BLOCK_BYTES]) {
         let mut maxv = sub[0];
         let mut minv = sub[0];
         for &v in sub {
-            if v > maxv { maxv = v; }
-            if v < minv { minv = v; }
+            if v > maxv {
+                maxv = v;
+            }
+            if v < minv {
+                minv = v;
+            }
         }
         let span = maxv - minv;
         let scale = if span > 1e-10 { span / 3.0 } else { 1e-10 };
@@ -601,7 +631,8 @@ fn dequantize_q2k_appl_block(src: &[u8; Q2K_BLOCK_BYTES], dst: &mut [f32; QK_K])
     }
 
     for j in 0..N_SUB {
-        let s = scales[j]; let m = mins[j];
+        let s = scales[j];
+        let m = mins[j];
         for i in 0..SUB_SIZE {
             dst[j * SUB_SIZE + i] = L[j * SUB_SIZE + i] as f32 * s + m;
         }
@@ -624,8 +655,12 @@ fn quantize_q3k_appl_block(src: &[f32; QK_K], dst: &mut [u8; Q3K_BLOCK_BYTES]) {
         let mut maxv = sub[0];
         let mut minv = sub[0];
         for &v in sub {
-            if v > maxv { maxv = v; }
-            if v < minv { minv = v; }
+            if v > maxv {
+                maxv = v;
+            }
+            if v < minv {
+                minv = v;
+            }
         }
         let span = maxv - minv;
         let scale = if span > 1e-10 { span / 7.0 } else { 1e-10 };
@@ -694,7 +729,8 @@ fn dequantize_q3k_appl_block(src: &[u8; Q3K_BLOCK_BYTES], dst: &mut [f32; QK_K])
     }
 
     for j in 0..N_SUB {
-        let s = scales[j]; let m = mins[j];
+        let s = scales[j];
+        let m = mins[j];
         for i in 0..SUB_SIZE {
             dst[j * SUB_SIZE + i] = L[j * SUB_SIZE + i] as f32 * s + m;
         }
@@ -728,23 +764,45 @@ unsafe fn dequantize_q3k_block(src: *const u8, dst: *mut f32) {
 /// Quantize matrix to Q2_K_APPL format.
 #[no_mangle]
 pub extern "C" fn lko_quantize_q2k_appl(
-    data: *const c_float, rows: i32, cols: i32, out_size: *mut i64,
+    data: *const c_float,
+    rows: i32,
+    cols: i32,
+    out_size: *mut i64,
 ) -> *mut u8 {
-    quantize_generic(data, rows, cols, out_size, Q2K_BLOCK_BYTES, quantize_q2k_block)
+    quantize_generic(
+        data,
+        rows,
+        cols,
+        out_size,
+        Q2K_BLOCK_BYTES,
+        quantize_q2k_block,
+    )
 }
 
 /// Quantize matrix to Q3_K_APPL format.
 #[no_mangle]
 pub extern "C" fn lko_quantize_q3k_appl(
-    data: *const c_float, rows: i32, cols: i32, out_size: *mut i64,
+    data: *const c_float,
+    rows: i32,
+    cols: i32,
+    out_size: *mut i64,
 ) -> *mut u8 {
-    quantize_generic(data, rows, cols, out_size, Q3K_BLOCK_BYTES, quantize_q3k_block)
+    quantize_generic(
+        data,
+        rows,
+        cols,
+        out_size,
+        Q3K_BLOCK_BYTES,
+        quantize_q3k_block,
+    )
 }
 
 /// Dequantize Q2_K_APPL data to f32.
 #[no_mangle]
 pub extern "C" fn lko_dequantize_q2k_appl_slice(
-    src: *const u8, num_blocks: i32, dst: *mut f32,
+    src: *const u8,
+    num_blocks: i32,
+    dst: *mut f32,
 ) -> i32 {
     dequantize_generic(src, num_blocks, dst, Q2K_BLOCK_BYTES, dequantize_q2k_block)
 }
@@ -752,7 +810,9 @@ pub extern "C" fn lko_dequantize_q2k_appl_slice(
 /// Dequantize Q3_K_APPL data to f32.
 #[no_mangle]
 pub extern "C" fn lko_dequantize_q3k_appl_slice(
-    src: *const u8, num_blocks: i32, dst: *mut f32,
+    src: *const u8,
+    num_blocks: i32,
+    dst: *mut f32,
 ) -> i32 {
     dequantize_generic(src, num_blocks, dst, Q3K_BLOCK_BYTES, dequantize_q3k_block)
 }
@@ -798,7 +858,9 @@ pub extern "C" fn lko_quantize_variable_bulk(
         total_out += nbytes;
     }
 
-    unsafe { *out_size = total_out as i64; }
+    unsafe {
+        *out_size = total_out as i64;
+    }
 
     let src = unsafe { std::slice::from_raw_parts(data, data_offset) };
     let mut out = vec![0u8; total_out];
@@ -821,7 +883,8 @@ pub extern "C" fn lko_quantize_variable_bulk(
 
         for row in 0..rows {
             let mut padded = vec![0.0f32; k_padded];
-            padded[..cols].copy_from_slice(&src[data_off + row * cols..data_off + (row + 1) * cols]);
+            padded[..cols]
+                .copy_from_slice(&src[data_off + row * cols..data_off + (row + 1) * cols]);
 
             for b in 0..num_blocks {
                 let mut block_arr = [0.0f32; QK_K];
@@ -872,7 +935,10 @@ type BlockQuantizer = unsafe fn(block_in: *const f32, block_out: *mut u8);
 
 /// Generic block quantizer: iterate over padded rows, call the per-block function.
 fn quantize_generic(
-    data: *const c_float, rows: i32, cols: i32, out_size: *mut i64,
+    data: *const c_float,
+    rows: i32,
+    cols: i32,
+    out_size: *mut i64,
     block_bytes: usize,
     quantize_fn: BlockQuantizer,
 ) -> *mut u8 {
@@ -882,7 +948,9 @@ fn quantize_generic(
     let k_padded = num_blocks * QK_K;
     let total_bytes = m * num_blocks * block_bytes;
 
-    unsafe { *out_size = total_bytes as i64; }
+    unsafe {
+        *out_size = total_bytes as i64;
+    }
 
     let src = unsafe { std::slice::from_raw_parts(data, m * ncols) };
     let mut out = vec![0u8; total_bytes];
@@ -911,7 +979,9 @@ fn quantize_generic(
 /// Generic block dequantizer.
 /// Each block: block_bytes input → 256 f32 output.
 fn dequantize_generic(
-    src: *const u8, num_blocks: i32, dst: *mut f32,
+    src: *const u8,
+    num_blocks: i32,
+    dst: *mut f32,
     block_bytes: usize,
     dequantize_fn: unsafe fn(src: *const u8, dst: *mut f32),
 ) -> i32 {
@@ -1010,5 +1080,4 @@ mod tests {
         assert_eq!(blk.len(), 160);
         lko_free(ptr);
     }
-
 }

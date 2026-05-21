@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Objeta Expert Layout",
+  "type": "object",
+  "required": ["schema_version", "model", "num_layers", "num_experts", "experts"],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "model": { "type": "string" },
+    "num_layers": { "type": "integer" },
+    "num_experts": { "type": "integer" },
+    "experts": { "type": "array" }
+  }
+}

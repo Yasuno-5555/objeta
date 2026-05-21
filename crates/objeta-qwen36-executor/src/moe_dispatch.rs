@@ -11,10 +11,11 @@
 //!
 //! All data stays in native memory. No Python objects, no numpy, no mx.array.
 
+use rayon::prelude::*;
 use std::collections::HashMap;
 use std::os::raw::c_float;
-use std::sync::RwLock;
-use rayon::prelude::*;
+use std::sync::{Arc, RwLock};
+use std::time::Instant;
 
 // Q4_K_APPL constants (must match quantize.rs)
 const QK_K: usize = 256;
@@ -31,14 +32,13 @@ const TOP_K: usize = 8;
 const GU_ROWS: usize = 1024; // per expert
 const GU_K: usize = 2048;
 const GU_ROW_BYTES: usize = (GU_K / QK_K) * Q4K_BLOCK_BYTES; // 1280
-const GU_EXPERT_BYTES: usize = GU_ROWS * GU_ROW_BYTES; // 1,310,720
+pub const GU_EXPERT_BYTES: usize = GU_ROWS * GU_ROW_BYTES; // 1,310,720
 
 // down: 256 experts × 2048 rows, K=512
 const D_ROWS: usize = 2048;
 const D_K: usize = 512;
 const D_ROW_BYTES: usize = (D_K / QK_K) * Q4K_BLOCK_BYTES; // 320
-const D_EXPERT_BYTES: usize = D_ROWS * D_ROW_BYTES; // 655,360
-
+pub const D_EXPERT_BYTES: usize = D_ROWS * D_ROW_BYTES; // 655,360
 
 // ── F16 conversion ─────────────────────────────────────────────────
 
@@ -51,17 +51,27 @@ fn f16_to_f32(bits: u16) -> f32 {
             f32::from_bits(sign << 31)
         } else {
             let v = (mant as f32) / 1024.0 * 2.0f32.powi(-14);
-            if sign == 1 { -v } else { v }
+            if sign == 1 {
+                -v
+            } else {
+                v
+            }
         }
     } else if exp == 31 {
-        if mant == 0 { f32::from_bits((sign << 31) | 0x7F800000) }
-        else { f32::NAN }
+        if mant == 0 {
+            f32::from_bits((sign << 31) | 0x7F800000)
+        } else {
+            f32::NAN
+        }
     } else {
         let v = 2.0f32.powi(exp as i32 - 15) * (1.0 + mant as f32 / 1024.0);
-        if sign == 1 { -v } else { v }
+        if sign == 1 {
+            -v
+        } else {
+            v
+        }
     }
 }
-
 
 // ── Q4_K_APPL dequantize + GEMV ────────────────────────────────────
 
@@ -81,7 +91,8 @@ fn q4k_gemv(q4_data: &[u8], M: usize, K: usize, x: &[f32]) -> Vec<f32> {
         for b in 0..num_blocks {
             let blk_start = row_start + b * Q4K_BLOCK_BYTES;
             let blk: &[u8; Q4K_BLOCK_BYTES] = &q4_data[blk_start..blk_start + Q4K_BLOCK_BYTES]
-                .try_into().unwrap();
+                .try_into()
+                .unwrap();
 
             // Read scales and mins
             let mut scales = [0.0f32; N_SUB];
@@ -105,7 +116,8 @@ fn q4k_gemv(q4_data: &[u8], M: usize, K: usize, x: &[f32]) -> Vec<f32> {
 
             // Dequantize to f32
             for j in 0..N_SUB {
-                let s = scales[j]; let m = mins[j];
+                let s = scales[j];
+                let m = mins[j];
                 for i in 0..SUB_SIZE {
                     dequant_buf[j * SUB_SIZE + i] = L[j * SUB_SIZE + i] as f32 * s + m;
                 }
@@ -134,7 +146,8 @@ fn q4k_dot_row(q4_row: &[u8], K: usize, x: &[f32]) -> f32 {
     for b in 0..num_blocks {
         let blk_start = b * Q4K_BLOCK_BYTES;
         let blk: &[u8; Q4K_BLOCK_BYTES] = &q4_row[blk_start..blk_start + Q4K_BLOCK_BYTES]
-            .try_into().unwrap();
+            .try_into()
+            .unwrap();
 
         // Read scales and mins
         let mut scales = [0.0f32; N_SUB];
@@ -180,54 +193,156 @@ pub fn fused_moe_q4_selected_v0(
     selected_experts: &[usize],
     routing_weights: &[f32],
 ) -> Vec<f32> {
-    let n = selected_experts.len();
-    if n == 0 {
-        return vec![0.0f32; HIDDEN_DIM];
-    }
-
-    // 1. Parallel SwiGLU projection for each selected expert
-    //    Produces an intermediate hidden vector of size FFN_DIM (512) per expert.
-    let hiddens: Vec<Vec<f32>> = selected_experts
-        .par_iter()
-        .map(|&eid| {
-            let gu_start = eid * GU_EXPERT_BYTES;
-            let gu_slice = &gate_up_q4[gu_start..gu_start + GU_EXPERT_BYTES];
-            let mut hid = vec![0.0f32; FFN_DIM];
-            for i in 0..FFN_DIM {
-                let gate_row = &gu_slice[i * GU_ROW_BYTES..(i + 1) * GU_ROW_BYTES];
-                let up_row = &gu_slice[(FFN_DIM + i) * GU_ROW_BYTES..(FFN_DIM + i + 1) * GU_ROW_BYTES];
-                let g = q4k_dot_row(gate_row, GU_K, x);
-                let u = q4k_dot_row(up_row, GU_K, x);
-                hid[i] = silu(g) * u;
-            }
-            hid
-        })
-        .collect();
-
-    // 2. Parallel Down projection across all output rows
-    //    Directly accumulate weighted contribution of all selected experts.
-    let output: Vec<f32> = (0..HIDDEN_DIM)
-        .into_par_iter()
-        .map(|r| {
-            let mut val = 0.0f32;
-            for e in 0..n {
-                let eid = selected_experts[e];
-                let rw = routing_weights[e];
-
-                let d_start = eid * D_EXPERT_BYTES;
-                let down_slice = &down_q4[d_start..d_start + D_EXPERT_BYTES];
-                let down_row = &down_slice[r * D_ROW_BYTES..(r + 1) * D_ROW_BYTES];
-
-                let dot = q4k_dot_row(down_row, D_K, &hiddens[e]);
-                val += dot * rw;
-            }
-            val
-        })
-        .collect();
-
-    output
+    fused_moe_q4_selected_profiled(
+        gate_up_q4,
+        down_q4,
+        x,
+        selected_experts,
+        routing_weights,
+        FusedDownMode::RowParallel,
+        None,
+    )
+    .0
 }
 
+pub fn fused_moe_q4_selected_profiled(
+    gate_up_q4: &[u8],
+    down_q4: &[u8],
+    x: &[f32],
+    selected_experts: &[usize],
+    routing_weights: &[f32],
+    down_mode: FusedDownMode,
+    scratch: Option<&mut FusedMoeScratch>,
+) -> (Vec<f32>, FusedMoeDispatchTiming) {
+    let total_start = Instant::now();
+    let n = selected_experts.len();
+    if n == 0 {
+        return (vec![0.0f32; HIDDEN_DIM], FusedMoeDispatchTiming::default());
+    }
+
+    let alloc_start = Instant::now();
+    let mut local_scratch = FusedMoeScratch::default();
+    let scratch = match scratch {
+        Some(s) => {
+            s.ensure(n);
+            s
+        }
+        None => {
+            local_scratch.ensure(n);
+            &mut local_scratch
+        }
+    };
+    let mut output = vec![0.0f32; HIDDEN_DIM];
+    let alloc_sec = alloc_start.elapsed().as_secs_f64();
+
+    let gate_up_start = Instant::now();
+    scratch
+        .gate
+        .par_chunks_mut(FFN_DIM)
+        .zip(scratch.up.par_chunks_mut(FFN_DIM))
+        .zip(selected_experts.par_iter().copied())
+        .for_each(|((gate_chunk, up_chunk), eid)| {
+            let gu_start = eid * GU_EXPERT_BYTES;
+            let gu_slice = &gate_up_q4[gu_start..gu_start + GU_EXPERT_BYTES];
+            for i in 0..FFN_DIM {
+                let gate_row = &gu_slice[i * GU_ROW_BYTES..(i + 1) * GU_ROW_BYTES];
+                let up_row =
+                    &gu_slice[(FFN_DIM + i) * GU_ROW_BYTES..(FFN_DIM + i + 1) * GU_ROW_BYTES];
+                gate_chunk[i] = q4k_dot_row(gate_row, GU_K, x);
+                up_chunk[i] = q4k_dot_row(up_row, GU_K, x);
+            }
+        });
+    let gate_up_sec = gate_up_start.elapsed().as_secs_f64();
+
+    let swiglu_start = Instant::now();
+    let gate_ref: &[f32] = &scratch.gate;
+    let up_ref: &[f32] = &scratch.up;
+    scratch
+        .hidden
+        .par_chunks_mut(FFN_DIM)
+        .enumerate()
+        .for_each(|(e, hidden_chunk)| {
+            let base = e * FFN_DIM;
+            for i in 0..FFN_DIM {
+                hidden_chunk[i] = silu(gate_ref[base + i]) * up_ref[base + i];
+            }
+        });
+    let swiglu_sec = swiglu_start.elapsed().as_secs_f64();
+
+    let down_start = Instant::now();
+    let hidden_ref: &[f32] = &scratch.hidden;
+    match down_mode {
+        FusedDownMode::Serial => {
+            for r in 0..HIDDEN_DIM {
+                let mut val = 0.0f32;
+                for e in 0..n {
+                    let eid = selected_experts[e];
+                    let rw = routing_weights[e];
+                    let d_start = eid * D_EXPERT_BYTES;
+                    let down_slice = &down_q4[d_start..d_start + D_EXPERT_BYTES];
+                    let down_row = &down_slice[r * D_ROW_BYTES..(r + 1) * D_ROW_BYTES];
+                    let hidden_chunk = &hidden_ref[e * FFN_DIM..(e + 1) * FFN_DIM];
+                    let dot = q4k_dot_row(down_row, D_K, hidden_chunk);
+                    val += dot * rw;
+                }
+                output[r] = val;
+            }
+        }
+        FusedDownMode::RowParallel => {
+            output.par_iter_mut().enumerate().for_each(|(r, out_cell)| {
+                let mut val = 0.0f32;
+                for e in 0..n {
+                    let eid = selected_experts[e];
+                    let rw = routing_weights[e];
+                    let d_start = eid * D_EXPERT_BYTES;
+                    let down_slice = &down_q4[d_start..d_start + D_EXPERT_BYTES];
+                    let down_row = &down_slice[r * D_ROW_BYTES..(r + 1) * D_ROW_BYTES];
+                    let hidden_chunk = &hidden_ref[e * FFN_DIM..(e + 1) * FFN_DIM];
+                    let dot = q4k_dot_row(down_row, D_K, hidden_chunk);
+                    val += dot * rw;
+                }
+                *out_cell = val;
+            });
+        }
+        FusedDownMode::Chunked(chunk_rows) => {
+            let chunk_rows = chunk_rows.max(1);
+            output
+                .par_chunks_mut(chunk_rows)
+                .enumerate()
+                .for_each(|(chunk_idx, out_chunk)| {
+                    let row_start = chunk_idx * chunk_rows;
+                    for (offset, out_cell) in out_chunk.iter_mut().enumerate() {
+                        let r = row_start + offset;
+                        let mut val = 0.0f32;
+                        for e in 0..n {
+                            let eid = selected_experts[e];
+                            let rw = routing_weights[e];
+                            let d_start = eid * D_EXPERT_BYTES;
+                            let down_slice = &down_q4[d_start..d_start + D_EXPERT_BYTES];
+                            let down_row = &down_slice[r * D_ROW_BYTES..(r + 1) * D_ROW_BYTES];
+                            let hidden_chunk = &hidden_ref[e * FFN_DIM..(e + 1) * FFN_DIM];
+                            let dot = q4k_dot_row(down_row, D_K, hidden_chunk);
+                            val += dot * rw;
+                        }
+                        *out_cell = val;
+                    }
+                });
+        }
+    }
+    let down_accum_sec = down_start.elapsed().as_secs_f64();
+
+    (
+        output,
+        FusedMoeDispatchTiming {
+            gate_up_sec,
+            swiglu_sec,
+            down_accum_sec,
+            alloc_sec,
+            stats_sec: 0.0,
+            total_sec: total_start.elapsed().as_secs_f64(),
+        },
+    )
+}
 
 // ── Tests ──────────────────────────────────────────────────────────
 
@@ -275,12 +390,12 @@ mod tests {
         let router: Vec<f32> = (0..N_EXPERTS * HIDDEN_DIM)
             .map(|i| ((i as f32) * 0.001).sin())
             .collect();
-        let (indices, weights) = router_topk_cpu(&router, &x.repeat(HIDDEN_DIM / K)[..HIDDEN_DIM], TOP_K);
+        let (indices, weights) =
+            router_topk_cpu(&router, &x.repeat(HIDDEN_DIM / K)[..HIDDEN_DIM], TOP_K);
         assert_eq!(indices.len(), TOP_K);
         assert!((weights.iter().sum::<f32>() - 1.0).abs() < 0.01);
     }
 }
-
 
 // ── Router ──────────────────────────────────────────────────────────
 
@@ -302,39 +417,50 @@ pub fn router_topk_cpu(router_w: &[f32], x: &[f32], k: usize) -> (Vec<usize>, Ve
     let top: Vec<_> = logits[..k].to_vec();
 
     // Softmax
-    let max_logit = top.iter().map(|(l, _)| *l).fold(f32::NEG_INFINITY, f32::max);
-    let exp_sum: f32 = top.iter().map(|(l, _)| ((*l - max_logit) as f32).exp()).sum();
-    let weights: Vec<f32> = top.iter().map(|(l, _)| ((*l - max_logit) as f32).exp() / exp_sum).collect();
+    let max_logit = top
+        .iter()
+        .map(|(l, _)| *l)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let exp_sum: f32 = top
+        .iter()
+        .map(|(l, _)| ((*l - max_logit) as f32).exp())
+        .sum();
+    let weights: Vec<f32> = top
+        .iter()
+        .map(|(l, _)| ((*l - max_logit) as f32).exp() / exp_sum)
+        .collect();
     let indices: Vec<usize> = top.iter().map(|(_, i)| *i).collect();
 
     (indices, weights)
 }
-
 
 /// Adaptive top-k: threshold based on router entropy.
 /// Peaked distribution → aggressive pruning (2-4 experts).
 /// Flat distribution → conservative (6-8 experts).
 /// Returns (indices, renormalized_weights, n_selected).
 pub fn router_topk_adaptive(
-    router_w: &[f32], x: &[f32], max_k: usize,
+    router_w: &[f32],
+    x: &[f32],
+    max_k: usize,
 ) -> (Vec<usize>, Vec<f32>, usize) {
     let (indices, weights) = router_topk_cpu(router_w, x, max_k);
 
     // Compute entropy of top-k weights to gauge distribution peakedness
-    let entropy: f32 = -weights.iter()
+    let entropy: f32 = -weights
+        .iter()
         .map(|&w| if w > 1e-10 { w * w.ln() } else { 0.0 })
         .sum::<f32>();
 
     // Adaptive threshold: lower entropy → more peaked → aggressive pruning
     // max entropy for k=8 uniform = ln(8) ≈ 2.08
     let cum_threshold = if entropy < 1.0 {
-        0.45  // peaked: 2-3 experts
+        0.45 // peaked: 2-3 experts
     } else if entropy < 1.5 {
-        0.60  // moderate: 4-5 experts
+        0.60 // moderate: 4-5 experts
     } else if entropy < 2.0 {
-        0.78  // somewhat flat: 6 experts
+        0.78 // somewhat flat: 6 experts
     } else {
-        0.88  // near-uniform: 7 experts (vs 8)
+        0.88 // near-uniform: 7 experts (vs 8)
     };
 
     let mut cum = 0.0f32;
@@ -342,11 +468,15 @@ pub fn router_topk_adaptive(
     for (i, &w) in weights.iter().enumerate() {
         cum += w;
         n = i + 1;
-        if cum >= cum_threshold && n >= 2 { break; }
+        if cum >= cum_threshold && n >= 2 {
+            break;
+        }
     }
     let mut truncated_weights: Vec<f32> = weights[..n].to_vec();
     let sum: f32 = truncated_weights.iter().sum();
-    for w in &mut truncated_weights { *w /= sum.max(1e-12); }
+    for w in &mut truncated_weights {
+        *w /= sum.max(1e-12);
+    }
     (indices[..n].to_vec(), truncated_weights, n)
 }
 
@@ -357,14 +487,85 @@ struct SendPtr(*const f32);
 unsafe impl Send for SendPtr {}
 unsafe impl Sync for SendPtr {}
 
-fn silu(x: f32) -> f32 { x / (1.0 + (-x).exp()) }
+fn silu(x: f32) -> f32 {
+    x / (1.0 + (-x).exp())
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum FusedDownMode {
+    Serial,
+    RowParallel,
+    Chunked(usize),
+}
+
+impl FusedDownMode {
+    pub fn from_env_default() -> Self {
+        let raw =
+            std::env::var("OBJETA_FUSED_MOE_VARIANT").unwrap_or_else(|_| "chunked128".to_string());
+        Self::from_name(&raw).unwrap_or(FusedDownMode::Chunked(128))
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "serial" => Some(FusedDownMode::Serial),
+            "row_parallel" => Some(FusedDownMode::RowParallel),
+            "chunked32" => Some(FusedDownMode::Chunked(32)),
+            "chunked64" => Some(FusedDownMode::Chunked(64)),
+            "chunked128" => Some(FusedDownMode::Chunked(128)),
+            _ => None,
+        }
+    }
+
+    pub fn as_name(&self) -> &'static str {
+        match self {
+            FusedDownMode::Serial => "serial",
+            FusedDownMode::RowParallel => "row_parallel",
+            FusedDownMode::Chunked(32) => "chunked32",
+            FusedDownMode::Chunked(64) => "chunked64",
+            FusedDownMode::Chunked(128) => "chunked128",
+            FusedDownMode::Chunked(_) => "chunked_custom",
+        }
+    }
+}
+
+#[derive(Clone, Default, Debug)]
+pub struct FusedMoeScratch {
+    pub gate: Vec<f32>,
+    pub up: Vec<f32>,
+    pub hidden: Vec<f32>,
+}
+
+impl FusedMoeScratch {
+    pub fn ensure(&mut self, n_experts: usize) {
+        let elems = n_experts * FFN_DIM;
+        if self.gate.len() != elems {
+            self.gate.resize(elems, 0.0);
+        }
+        if self.up.len() != elems {
+            self.up.resize(elems, 0.0);
+        }
+        if self.hidden.len() != elems {
+            self.hidden.resize(elems, 0.0);
+        }
+    }
+}
+
+#[derive(Clone, Copy, Default, Debug)]
+pub struct FusedMoeDispatchTiming {
+    pub gate_up_sec: f64,
+    pub swiglu_sec: f64,
+    pub down_accum_sec: f64,
+    pub alloc_sec: f64,
+    pub stats_sec: f64,
+    pub total_sec: f64,
+}
 
 /// Full MoE expert forward for one layer. Single function call, zero Python overhead.
 fn moe_forward_layer(
-    router_w: &[f32],        // [256, 2048]
-    gate_up_q4: &[u8],       // all 256 experts, 320MB
-    down_q4: &[u8],          // all 256 experts, 160MB
-    x: &[f32],               // [2048]
+    router_w: &[f32],           // [256, 2048]
+    gate_up_q4: &[u8],          // all 256 experts, 320MB
+    down_q4: &[u8],             // all 256 experts, 160MB
+    x: &[f32],                  // [2048]
     track_layer: Option<usize>, // if Some, record routing to global freq tracker
 ) -> (Vec<f32>, Vec<usize>, Vec<f32>) {
     // 1. Router
@@ -388,11 +589,25 @@ fn moe_forward_layer(
         let caches = unsafe { CACHED_EXPERTS.as_ref() };
         if let Some(caches) = caches {
             if track < caches.len() {
-                caches[track].lock().unwrap().iter()
-                    .map(|(eid, g, u, d)| (*eid, SendPtr(g.as_ptr()), SendPtr(u.as_ptr()), SendPtr(d.as_ptr())))
+                caches[track]
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .map(|(eid, g, u, d)| {
+                        (
+                            *eid,
+                            SendPtr(g.as_ptr()),
+                            SendPtr(u.as_ptr()),
+                            SendPtr(d.as_ptr()),
+                        )
+                    })
                     .collect()
-            } else { Vec::new() }
-        } else { Vec::new() }
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        }
     };
 
     // 2. Per-expert forward (parallel)
@@ -401,7 +616,9 @@ fn moe_forward_layer(
         .zip(routing_weights.par_iter())
         .map(|(&eid, &rw)| {
             // Check cache first (fast f32 GEMV, no dequantize)
-            if let Some((_, gate_ptr, up_ptr, down_ptr)) = cache.iter().find(|(cid, _, _, _)| *cid == eid) {
+            if let Some((_, gate_ptr, up_ptr, down_ptr)) =
+                cache.iter().find(|(cid, _, _, _)| *cid == eid)
+            {
                 // Reconstruct slices from raw pointers safely
                 let gate = unsafe { std::slice::from_raw_parts(gate_ptr.0, FFN_DIM * HIDDEN_DIM) };
                 let up = unsafe { std::slice::from_raw_parts(up_ptr.0, FFN_DIM * HIDDEN_DIM) };
@@ -411,10 +628,14 @@ fn moe_forward_layer(
                 let gate_out = f32_gemv(gate, x, FFN_DIM, HIDDEN_DIM);
                 let up_out = f32_gemv(up, x, FFN_DIM, HIDDEN_DIM);
                 let mut hidden = vec![0.0f32; FFN_DIM];
-                for i in 0..FFN_DIM { hidden[i] = silu(gate_out[i]) * up_out[i]; }
+                for i in 0..FFN_DIM {
+                    hidden[i] = silu(gate_out[i]) * up_out[i];
+                }
                 let down_out = f32_gemv(down, &hidden, HIDDEN_DIM, FFN_DIM);
                 let mut scaled = down_out;
-                for v in &mut scaled { *v *= rw; }
+                for v in &mut scaled {
+                    *v *= rw;
+                }
                 return scaled;
             }
 
@@ -454,7 +675,6 @@ fn moe_forward_layer(
 
     (output, expert_ids, routing_weights)
 }
-
 
 // ── Hybrid Expert Cache ─────────────────────────────────────────────
 
@@ -498,13 +718,20 @@ impl ExpertCache {
 
         let mut cache = self.cache.write().unwrap();
         for &eid in &top_ids {
-            if cache.contains_key(&eid) { continue; }
+            if cache.contains_key(&eid) {
+                continue;
+            }
             // Dequantize gate_up
             let gu_start = eid * GU_EXPERT_BYTES;
-            let gu = q4k_dequantize_only(&gate_up_q4[gu_start..gu_start + GU_EXPERT_BYTES], GU_ROWS, GU_K);
+            let gu = q4k_dequantize_only(
+                &gate_up_q4[gu_start..gu_start + GU_EXPERT_BYTES],
+                GU_ROWS,
+                GU_K,
+            );
             // Dequantize down
             let d_start = eid * D_EXPERT_BYTES;
-            let down = q4k_dequantize_only(&down_q4[d_start..d_start + D_EXPERT_BYTES], D_ROWS, D_K);
+            let down =
+                q4k_dequantize_only(&down_q4[d_start..d_start + D_EXPERT_BYTES], D_ROWS, D_K);
 
             let gate = gu[..FFN_DIM * GU_K].to_vec(); // Actually: gu is (1024, 2048) f32
             let up = gu[FFN_DIM * GU_K..].to_vec();
@@ -515,9 +742,12 @@ impl ExpertCache {
     }
 
     /// Get expert weights (from cache or dequantize on miss).
-    pub fn get(&self, eid: usize, gate_up_q4: &[u8], down_q4: &[u8])
-        -> (Vec<f32>, Vec<f32>, Vec<f32>)
-    {
+    pub fn get(
+        &self,
+        eid: usize,
+        gate_up_q4: &[u8],
+        down_q4: &[u8],
+    ) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
         {
             let cache = self.cache.read().unwrap();
             if let Some((g, u, d)) = cache.get(&eid) {
@@ -528,7 +758,11 @@ impl ExpertCache {
         *self.misses.write().unwrap() += 1;
         // Miss: dequantize
         let gu_start = eid * GU_EXPERT_BYTES;
-        let gu = q4k_dequantize_only(&gate_up_q4[gu_start..gu_start + GU_EXPERT_BYTES], GU_ROWS, GU_K);
+        let gu = q4k_dequantize_only(
+            &gate_up_q4[gu_start..gu_start + GU_EXPERT_BYTES],
+            GU_ROWS,
+            GU_K,
+        );
         let d_start = eid * D_EXPERT_BYTES;
         let down = q4k_dequantize_only(&down_q4[d_start..d_start + D_EXPERT_BYTES], D_ROWS, D_K);
         let gate = gu[..FFN_DIM * GU_K].to_vec();
@@ -555,7 +789,8 @@ fn q4k_dequantize_only(q4_data: &[u8], M: usize, K: usize) -> Vec<f32> {
         for b in 0..num_blocks {
             let blk_start = row_start + b * Q4K_BLOCK_BYTES;
             let blk: &[u8; Q4K_BLOCK_BYTES] = &q4_data[blk_start..blk_start + Q4K_BLOCK_BYTES]
-                .try_into().unwrap();
+                .try_into()
+                .unwrap();
 
             let mut scales = [0.0f32; N_SUB];
             let mut mins = [0.0f32; N_SUB];
@@ -576,7 +811,8 @@ fn q4k_dequantize_only(q4_data: &[u8], M: usize, K: usize) -> Vec<f32> {
             }
 
             for j in 0..N_SUB {
-                let s = scales[j]; let m = mins[j];
+                let s = scales[j];
+                let m = mins[j];
                 for i in 0..SUB_SIZE {
                     dequant_buf[j * SUB_SIZE + i] = L[j * SUB_SIZE + i] as f32 * s + m;
                 }
@@ -594,7 +830,9 @@ fn q4k_dequantize_only(q4_data: &[u8], M: usize, K: usize) -> Vec<f32> {
 use std::sync::Mutex;
 
 /// Per-layer expert caches: CACHED_EXPERTS[layer] = vec of (eid, gate, up, down) f32
-pub(crate) static mut CACHED_EXPERTS: Option<Vec<Mutex<Vec<(usize, Vec<f32>, Vec<f32>, Vec<f32>)>>>> = None;
+pub(crate) static mut CACHED_EXPERTS: Option<
+    Vec<Mutex<Vec<(usize, Vec<f32>, Vec<f32>, Vec<f32>)>>>,
+> = None;
 
 /// Record routing decisions for frequency tracking (warmup).
 pub(crate) fn record_routing(layer_idx: usize, expert_ids: &[usize]) {
@@ -611,28 +849,41 @@ pub(crate) fn record_routing(layer_idx: usize, expert_ids: &[usize]) {
 
 /// Compute expert output directly from cached f32 weights (clone + GEMV outside lock).
 /// Returns MoE output contribution (2048 f32) scaled by routing weight, or None if not cached.
-pub(crate) fn compute_cached_expert(layer_idx: usize, eid: usize, x: &[f32], rw: f32) -> Option<Vec<f32>> {
+pub(crate) fn compute_cached_expert(
+    layer_idx: usize,
+    eid: usize,
+    x: &[f32],
+    rw: f32,
+) -> Option<Vec<f32>> {
     use crate::qwen36_forward::dot_f32;
     let caches = unsafe { CACHED_EXPERTS.as_ref()? };
     let cache = caches.get(layer_idx)?;
     // Lock ONLY for lookup+clone (~0.2ms at 60GB/s), release before GEMV
     let (gate, up, down) = {
         let cache = cache.lock().unwrap();
-        cache.iter().find(|(id, _, _, _)| *id == eid)
+        cache
+            .iter()
+            .find(|(id, _, _, _)| *id == eid)
             .map(|(_, g, u, d)| (g.clone(), u.clone(), d.clone()))?
     };
 
     // gate GEMV: gate (512, 2048) @ x (2048) → (512) — parallel across rows
-    let gate_out: Vec<f32> = (0..FFN_DIM).into_par_iter().map(|row| {
-        let w = &gate[row * HIDDEN_DIM..(row + 1) * HIDDEN_DIM];
-        dot_f32(w, x)
-    }).collect();
+    let gate_out: Vec<f32> = (0..FFN_DIM)
+        .into_par_iter()
+        .map(|row| {
+            let w = &gate[row * HIDDEN_DIM..(row + 1) * HIDDEN_DIM];
+            dot_f32(w, x)
+        })
+        .collect();
 
     // up GEMV: up (512, 2048) @ x (2048) → (512)
-    let up_out: Vec<f32> = (0..FFN_DIM).into_par_iter().map(|row| {
-        let w = &up[row * HIDDEN_DIM..(row + 1) * HIDDEN_DIM];
-        dot_f32(w, x)
-    }).collect();
+    let up_out: Vec<f32> = (0..FFN_DIM)
+        .into_par_iter()
+        .map(|row| {
+            let w = &up[row * HIDDEN_DIM..(row + 1) * HIDDEN_DIM];
+            dot_f32(w, x)
+        })
+        .collect();
 
     // SwiGLU
     let mut hidden = vec![0.0f32; FFN_DIM];
@@ -642,21 +893,29 @@ pub(crate) fn compute_cached_expert(layer_idx: usize, eid: usize, x: &[f32], rw:
     }
 
     // down GEMV: down (2048, 512) @ hidden (512) → (2048) — parallel across rows, NEON dot
-    let down_out: Vec<f32> = (0..HIDDEN_DIM).into_par_iter().map(|row| {
-        let w = &down[row * FFN_DIM..(row + 1) * FFN_DIM];
-        dot_f32(w, &hidden) * rw
-    }).collect();
+    let down_out: Vec<f32> = (0..HIDDEN_DIM)
+        .into_par_iter()
+        .map(|row| {
+            let w = &down[row * FFN_DIM..(row + 1) * FFN_DIM];
+            dot_f32(w, &hidden) * rw
+        })
+        .collect();
 
     Some(down_out)
 }
 
 /// Look up a cached expert from the per-layer cache. Returns (gate, up, down) if found.
 /// Prefer compute_cached_expert for inference to avoid cloning.
-pub(crate) fn get_cached_expert(layer_idx: usize, eid: usize) -> Option<(Vec<f32>, Vec<f32>, Vec<f32>)> {
+pub(crate) fn get_cached_expert(
+    layer_idx: usize,
+    eid: usize,
+) -> Option<(Vec<f32>, Vec<f32>, Vec<f32>)> {
     let caches = unsafe { CACHED_EXPERTS.as_ref()? };
     let cache = caches.get(layer_idx)?;
     let cache = cache.lock().unwrap();
-    cache.iter().find(|(id, _, _, _)| *id == eid)
+    cache
+        .iter()
+        .find(|(id, _, _, _)| *id == eid)
         .map(|(_, g, u, d)| (g.clone(), u.clone(), d.clone()))
 }
 
@@ -667,7 +926,9 @@ pub extern "C" fn lko_moe_init_caches(n_layers: i32) -> i32 {
     for _ in 0..n_layers {
         caches.push(Mutex::new(Vec::new()));
     }
-    unsafe { CACHED_EXPERTS = Some(caches); }
+    unsafe {
+        CACHED_EXPERTS = Some(caches);
+    }
     0
 }
 
@@ -676,27 +937,38 @@ pub extern "C" fn lko_moe_init_caches(n_layers: i32) -> i32 {
 #[no_mangle]
 pub extern "C" fn lko_moe_build_cache(
     layer_idx: i32,
-    gate_up_q4: *const u8, gate_up_q4_len: i32,
-    down_q4: *const u8, down_q4_len: i32,
+    gate_up_q4: *const u8,
+    gate_up_q4_len: i32,
+    down_q4: *const u8,
+    down_q4_len: i32,
     cache_size: i32,
 ) -> i32 {
     let li = layer_idx as usize;
     // Get top-N from frequency tracker
     let top_ids = unsafe {
         let trackers = GLOBAL_FREQ.as_ref();
-        if trackers.is_none() || li >= trackers.unwrap().len() { return 0; }
+        if trackers.is_none() || li >= trackers.unwrap().len() {
+            return 0;
+        }
         let freq = trackers.unwrap()[li].read().unwrap();
         let mut entries: Vec<(usize, u32)> = freq.iter().map(|(k, v)| (*k, *v)).collect();
         entries.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
-        entries.iter().take(cache_size as usize).map(|(k, _)| *k).collect::<Vec<usize>>()
+        entries
+            .iter()
+            .take(cache_size as usize)
+            .map(|(k, _)| *k)
+            .collect::<Vec<usize>>()
     };
 
-    if top_ids.is_empty() { return 0; }
+    if top_ids.is_empty() {
+        return 0;
+    }
 
     let gu_q4 = unsafe { std::slice::from_raw_parts(gate_up_q4, gate_up_q4_len as usize) };
     let d_q4 = unsafe { std::slice::from_raw_parts(down_q4, down_q4_len as usize) };
 
-    let mut cache_entries: Vec<(usize, Vec<f32>, Vec<f32>, Vec<f32>)> = Vec::with_capacity(top_ids.len());
+    let mut cache_entries: Vec<(usize, Vec<f32>, Vec<f32>, Vec<f32>)> =
+        Vec::with_capacity(top_ids.len());
     for &eid in &top_ids {
         let gu_start = eid * GU_EXPERT_BYTES;
         let gu = q4k_dequantize_only(&gu_q4[gu_start..gu_start + GU_EXPERT_BYTES], GU_ROWS, GU_K);
@@ -725,7 +997,9 @@ pub extern "C" fn lko_moe_set_cache(
     n_experts: i32,
 ) {
     let n = n_experts as usize;
-    if n == 0 { return; }
+    if n == 0 {
+        return;
+    }
     let ids = unsafe { std::slice::from_raw_parts(expert_ids, n) };
     let gates = unsafe { std::slice::from_raw_parts(gate_f32, n * FFN_DIM * HIDDEN_DIM) };
     let ups = unsafe { std::slice::from_raw_parts(up_f32, n * FFN_DIM * HIDDEN_DIM) };
@@ -772,8 +1046,10 @@ fn f32_gemv(w: &[f32], x: &[f32], M: usize, K: usize) -> Vec<f32> {
 
 /// Dequantize a single expert from q4 to f32. Returns (gate, up, down).
 pub fn dequantize_expert_f32(
-    gu_q4: *const u8, gu_len: i32,
-    d_q4: *const u8, d_len: i32,
+    gu_q4: *const u8,
+    gu_len: i32,
+    d_q4: *const u8,
+    d_len: i32,
 ) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
     let gu = unsafe { std::slice::from_raw_parts(gu_q4, gu_len as usize) };
     let d = unsafe { std::slice::from_raw_parts(d_q4, d_len as usize) };
@@ -790,7 +1066,23 @@ pub fn dequantize_expert_f32(
 
 // ── Global frequency tracker ────────────────────────────────────────
 
-static mut GLOBAL_FREQ: Option<Vec<RwLock<HashMap<usize, u32>>>> = None;
+pub(crate) static mut GLOBAL_FREQ: Option<Vec<RwLock<HashMap<usize, u32>>>> = None;
+
+pub fn get_top_frequent_expert_ids(layer_idx: usize, limit: usize) -> Vec<usize> {
+    unsafe {
+        if let Some(ref trackers) = GLOBAL_FREQ {
+            if layer_idx >= trackers.len() {
+                return Vec::new();
+            }
+            let freq = trackers[layer_idx].read().unwrap();
+            let mut entries: Vec<(usize, u32)> = freq.iter().map(|(k, v)| (*k, *v)).collect();
+            entries.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
+            entries.iter().take(limit).map(|(k, _)| *k).collect()
+        } else {
+            Vec::new()
+        }
+    }
+}
 
 /// Initialize per-layer frequency trackers. Call once before inference.
 #[no_mangle]
@@ -799,18 +1091,27 @@ pub extern "C" fn lko_moe_init_freq_tracker(n_layers: i32) {
     for _ in 0..n_layers {
         trackers.push(RwLock::new(HashMap::new()));
     }
-    unsafe { GLOBAL_FREQ = Some(trackers); }
+    unsafe {
+        GLOBAL_FREQ = Some(trackers);
+    }
 }
 
 /// Get top-N expert IDs for a layer. Returns number of experts written.
 #[no_mangle]
 pub extern "C" fn lko_moe_get_top_experts(
-    layer_idx: i32, top_n: i32, out_ids: *mut i32, out_counts: *mut i32,
+    layer_idx: i32,
+    top_n: i32,
+    out_ids: *mut i32,
+    out_counts: *mut i32,
 ) -> i32 {
     let trackers = unsafe { GLOBAL_FREQ.as_ref() };
-    if trackers.is_none() { return 0; }
+    if trackers.is_none() {
+        return 0;
+    }
     let trackers = trackers.unwrap();
-    if layer_idx < 0 || layer_idx as usize >= trackers.len() { return 0; }
+    if layer_idx < 0 || layer_idx as usize >= trackers.len() {
+        return 0;
+    }
 
     let freq = trackers[layer_idx as usize].read().unwrap();
     let mut entries: Vec<(usize, u32)> = freq.iter().map(|(k, v)| (*k, *v)).collect();
@@ -829,7 +1130,9 @@ pub extern "C" fn lko_moe_get_top_experts(
 /// Free frequency tracker.
 #[no_mangle]
 pub extern "C" fn lko_moe_free_freq_tracker() {
-    unsafe { GLOBAL_FREQ = None; }
+    unsafe {
+        GLOBAL_FREQ = None;
+    }
 }
 
 // ── C API ───────────────────────────────────────────────────────────
@@ -864,31 +1167,729 @@ pub extern "C" fn lko_moe_forward_layer(
     expert_weights_out: *mut c_float,
     output: *mut c_float,
 ) -> i32 {
-    if router_w.is_null() || gate_up_q4.is_null() || down_q4.is_null()
-        || x.is_null() || output.is_null()
+    if router_w.is_null()
+        || gate_up_q4.is_null()
+        || down_q4.is_null()
+        || x.is_null()
+        || output.is_null()
     {
         return -1;
     }
 
     let k = top_k as usize;
-    if k == 0 || k > N_EXPERTS { return -1; }
+    if k == 0 || k > N_EXPERTS {
+        return -1;
+    }
 
     let router = unsafe { std::slice::from_raw_parts(router_w, N_EXPERTS * HIDDEN_DIM) };
     let gu_q4 = unsafe { std::slice::from_raw_parts(gate_up_q4, gate_up_q4_len as usize) };
     let d_q4 = unsafe { std::slice::from_raw_parts(down_q4, down_q4_len as usize) };
     let input = unsafe { std::slice::from_raw_parts(x, HIDDEN_DIM) };
 
-    let track = if layer_idx >= 0 { Some(layer_idx as usize) } else { None };
-    let (result, indices, weights) = moe_forward_layer(router, gu_q4, d_q4, input, track);
+    // Determine backend to use based on OBJETA_USE_FUSED_MOE
+    let use_fused = std::env::var("OBJETA_USE_FUSED_MOE")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let backend = if use_fused {
+        MoeExecutionBackend::FusedQ4
+    } else {
+        MoeExecutionBackend::LegacyDequantF32
+    };
+
+    let fused_down_mode = FusedDownMode::from_env_default();
+    let mut scratch = FusedMoeScratch::default();
+
+    let res = call_moe_pipeline(
+        if layer_idx >= 0 {
+            layer_idx as usize
+        } else {
+            0
+        },
+        input,
+        Some(router),
+        None, // selected_experts
+        backend,
+        fused_down_mode,
+        None, // residency_mgr
+        Some((gu_q4, d_q4)),
+        &mut scratch,
+        0, // token_id
+    );
 
     let out_slice = unsafe { std::slice::from_raw_parts_mut(output, HIDDEN_DIM) };
-    out_slice.copy_from_slice(&result);
+    out_slice.copy_from_slice(&res.output);
+
     let idx_out = unsafe { std::slice::from_raw_parts_mut(expert_indices_out, k) };
     let w_out = unsafe { std::slice::from_raw_parts_mut(expert_weights_out, k) };
-    for i in 0..k {
-        idx_out[i] = indices[i] as i32;
-        w_out[i] = weights[i];
+    for i in 0..k.min(res.telemetry.selected_expert_ids.len()) {
+        idx_out[i] = res.telemetry.selected_expert_ids[i] as i32;
+        w_out[i] = res.telemetry.selected_expert_weights[i];
     }
 
     0
+}
+
+pub fn fused_moe_q4_selected_cached(
+    pages: &[crate::expert_cache::ExpertPage],
+    x: &[f32],
+    selected_experts: &[usize],
+    routing_weights: &[f32],
+    down_mode: FusedDownMode,
+    scratch: Option<&mut FusedMoeScratch>,
+) -> (Vec<f32>, FusedMoeDispatchTiming) {
+    let total_start = Instant::now();
+    let n = pages.len();
+    if n == 0 {
+        return (vec![0.0f32; HIDDEN_DIM], FusedMoeDispatchTiming::default());
+    }
+
+    let alloc_start = Instant::now();
+    let mut local_scratch = FusedMoeScratch::default();
+    let scratch = match scratch {
+        Some(s) => {
+            s.ensure(n);
+            s
+        }
+        None => {
+            local_scratch.ensure(n);
+            &mut local_scratch
+        }
+    };
+    let mut output = vec![0.0f32; HIDDEN_DIM];
+    let alloc_sec = alloc_start.elapsed().as_secs_f64();
+
+    let gate_up_start = Instant::now();
+    scratch
+        .gate
+        .par_chunks_mut(FFN_DIM)
+        .zip(scratch.up.par_chunks_mut(FFN_DIM))
+        .zip(pages.par_iter())
+        .for_each(|((gate_chunk, up_chunk), page)| {
+            let gu_slice = &page.gate_up_bytes;
+            for i in 0..FFN_DIM {
+                let gate_row = &gu_slice[i * GU_ROW_BYTES..(i + 1) * GU_ROW_BYTES];
+                let up_row =
+                    &gu_slice[(FFN_DIM + i) * GU_ROW_BYTES..(FFN_DIM + i + 1) * GU_ROW_BYTES];
+                gate_chunk[i] = q4k_dot_row(gate_row, GU_K, x);
+                up_chunk[i] = q4k_dot_row(up_row, GU_K, x);
+            }
+        });
+    let gate_up_sec = gate_up_start.elapsed().as_secs_f64();
+
+    let swiglu_start = Instant::now();
+    let gate_ref: &[f32] = &scratch.gate;
+    let up_ref: &[f32] = &scratch.up;
+    scratch
+        .hidden
+        .par_chunks_mut(FFN_DIM)
+        .enumerate()
+        .for_each(|(e, hidden_chunk)| {
+            let base = e * FFN_DIM;
+            for i in 0..FFN_DIM {
+                hidden_chunk[i] = silu(gate_ref[base + i]) * up_ref[base + i];
+            }
+        });
+    let swiglu_sec = swiglu_start.elapsed().as_secs_f64();
+
+    let down_start = Instant::now();
+    let hidden_ref: &[f32] = &scratch.hidden;
+    match down_mode {
+        FusedDownMode::Serial => {
+            for r in 0..HIDDEN_DIM {
+                let mut val = 0.0f32;
+                for e in 0..n {
+                    let rw = routing_weights[e];
+                    let down_slice = &pages[e].down_bytes;
+                    let down_row = &down_slice[r * D_ROW_BYTES..(r + 1) * D_ROW_BYTES];
+                    let hidden_chunk = &hidden_ref[e * FFN_DIM..(e + 1) * FFN_DIM];
+                    let dot = q4k_dot_row(down_row, D_K, hidden_chunk);
+                    val += dot * rw;
+                }
+                output[r] = val;
+            }
+        }
+        FusedDownMode::RowParallel => {
+            output.par_iter_mut().enumerate().for_each(|(r, out_cell)| {
+                let mut val = 0.0f32;
+                for e in 0..n {
+                    let rw = routing_weights[e];
+                    let down_slice = &pages[e].down_bytes;
+                    let down_row = &down_slice[r * D_ROW_BYTES..(r + 1) * D_ROW_BYTES];
+                    let hidden_chunk = &hidden_ref[e * FFN_DIM..(e + 1) * FFN_DIM];
+                    let dot = q4k_dot_row(down_row, D_K, hidden_chunk);
+                    val += dot * rw;
+                }
+                *out_cell = val;
+            });
+        }
+        FusedDownMode::Chunked(chunk_rows) => {
+            let chunk_rows = chunk_rows.max(1);
+            output
+                .par_chunks_mut(chunk_rows)
+                .enumerate()
+                .for_each(|(chunk_idx, out_chunk)| {
+                    let row_start = chunk_idx * chunk_rows;
+                    for (offset, out_cell) in out_chunk.iter_mut().enumerate() {
+                        let r = row_start + offset;
+                        let mut val = 0.0f32;
+                        for e in 0..n {
+                            let rw = routing_weights[e];
+                            let down_slice = &pages[e].down_bytes;
+                            let down_row = &down_slice[r * D_ROW_BYTES..(r + 1) * D_ROW_BYTES];
+                            let hidden_chunk = &hidden_ref[e * FFN_DIM..(e + 1) * FFN_DIM];
+                            let dot = q4k_dot_row(down_row, D_K, hidden_chunk);
+                            val += dot * rw;
+                        }
+                        *out_cell = val;
+                    }
+                });
+        }
+    }
+    let down_accum_sec = down_start.elapsed().as_secs_f64();
+
+    let total_sec = total_start.elapsed().as_secs_f64();
+    (
+        output,
+        FusedMoeDispatchTiming {
+            total_sec,
+            gate_up_sec,
+            swiglu_sec,
+            down_accum_sec,
+            alloc_sec,
+            stats_sec: 0.0,
+        },
+    )
+}
+
+// ── Unified Pipeline Types ──────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum MoeExecutionBackend {
+    LegacyDequantF32,
+    FusedQ4,
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct SelectedExpert {
+    pub expert_id: usize,
+    pub routing_weight: f32,
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct MoeTelemetry {
+    pub call_moe_total_wall: f64,
+    pub router_wall: f64,
+    pub candidate_build_wall: f64,
+    pub policy_select_wall: f64,
+    pub cache_lookup_wall: f64,
+    pub cache_key_build_wall: f64,
+    pub cache_hit_lookup_wall: f64,
+    pub cache_miss_load_wall: f64,
+    pub cache_eviction_wall: f64,
+    pub cache_insert_wall: f64,
+    pub cache_page_clone_wall: f64,
+    pub routed_exec_wall: f64,
+    pub accumulate_wall: f64,
+    pub stats_wall: f64,
+
+    // Bytes / Cache stats
+    pub logical_expert_bytes_requested: u64,
+    pub actual_expert_bytes_loaded: u64,
+    pub resident_cache_bytes_reused: u64,
+    pub resident_cache_resident_bytes: u64,
+    pub pinned_resident_bytes: u64,
+    pub token_window_peak_resident_bytes: u64,
+    pub dequantized_scratch_bytes: u64,
+
+    // Count stats
+    pub warm_hit_count: u64,
+    pub cold_hit_count: u64,
+    pub direct_cold_load_count: u64,
+    pub eviction_count: u64,
+    pub eviction_count_during_token: u64,
+    pub eviction_count_at_token_end: u64,
+    pub selected_expert_count: usize,
+    pub routing_mass_kept: f32,
+    pub routing_mass_dropped: f32,
+    pub routing_mass_kept_pre_renorm: f32,
+    pub routing_mass_dropped_pre_renorm: f32,
+    pub routing_mass_sum_after_renorm: f32,
+    pub selected_renormalized: bool,
+
+    // Selections
+    pub selected_expert_ids: Vec<usize>,
+    pub selected_expert_weights: Vec<f32>,
+
+    // Fused timing metrics
+    pub fused_gate_up_sec: f64,
+    pub fused_swiglu_sec: f64,
+    pub fused_down_accum_sec: f64,
+    pub fused_alloc_sec: f64,
+    pub fused_stats_sec: f64,
+
+    // Group pre-resolve telemetry
+    pub residency_group_size: usize,
+    pub group_preresolve_wall_ms: f64,
+    pub group_pinned_bytes: u64,
+    pub group_preloaded_expert_count: u64,
+    pub group_cache_miss_count: u64,
+
+    // Selective/budgeted pre-resolve telemetry
+    pub group_preresolve_skipped_by_budget: u64,
+    pub group_preresolve_requested_bytes: u64,
+    pub group_preresolve_loaded_bytes: u64,
+    pub group_preresolve_hit_rate: f64,
+}
+
+fn pipeline_top_p_config() -> (f32, usize, usize) {
+    let top_p = std::env::var("OBJETA_MOE_TOP_P")
+        .ok()
+        .and_then(|v| v.parse::<f32>().ok())
+        .unwrap_or(1.0)
+        .clamp(0.0, 1.0);
+    let default_min = if top_p >= 0.999_999 { 8 } else { 2 };
+    let min_experts = std::env::var("OBJETA_MOE_MIN_EXPERTS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(default_min)
+        .max(1);
+    let max_experts = std::env::var("OBJETA_MOE_MAX_EXPERTS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(8)
+        .max(min_experts);
+    (top_p, min_experts, max_experts)
+}
+
+pub(crate) fn prune_selected_top_p(
+    selected: Vec<SelectedExpert>,
+    top_p: f32,
+    min_experts: usize,
+    max_experts: usize,
+) -> (Vec<SelectedExpert>, f32, f32, f32, bool) {
+    if selected.is_empty() {
+        return (selected, 0.0, 0.0, 0.0, false);
+    }
+    if selected.len() < TOP_K {
+        let kept_mass: f32 = selected.iter().map(|e| e.routing_weight).sum();
+        return (
+            selected,
+            kept_mass,
+            (1.0 - kept_mass).max(0.0),
+            kept_mass,
+            false,
+        );
+    }
+    if top_p >= 0.999_999 && max_experts >= selected.len() {
+        let kept_mass: f32 = selected.iter().map(|e| e.routing_weight).sum();
+        return (selected, kept_mass, 0.0, kept_mass, false);
+    }
+
+    let mut items = selected;
+    items.sort_by(|a, b| {
+        b.routing_weight
+            .partial_cmp(&a.routing_weight)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let mut kept = Vec::with_capacity(items.len().min(max_experts));
+    let mut cum = 0.0f32;
+    for item in items.into_iter() {
+        cum += item.routing_weight;
+        kept.push(item);
+        if kept.len() >= min_experts && cum >= top_p {
+            break;
+        }
+        if kept.len() >= max_experts {
+            break;
+        }
+    }
+    let kept_mass: f32 = kept.iter().map(|e| e.routing_weight).sum();
+    let dropped_mass = (1.0 - kept_mass).max(0.0);
+    let renorm_sum = kept_mass.max(1e-12);
+    for e in &mut kept {
+        e.routing_weight /= renorm_sum;
+    }
+    let routing_mass_sum_after_renorm: f32 = kept.iter().map(|e| e.routing_weight).sum();
+    (
+        kept,
+        kept_mass,
+        dropped_mass,
+        routing_mass_sum_after_renorm,
+        true,
+    )
+}
+
+pub struct MoeExecutionRequest<'a> {
+    pub layer_idx: usize,
+    pub hidden: &'a [f32],
+    pub selected: Vec<SelectedExpert>,
+    pub expert_pages: Vec<crate::expert_cache::ExpertPage>,
+    pub backend: MoeExecutionBackend,
+    pub fused_down_mode: FusedDownMode,
+}
+
+pub struct MoeExecutionResult {
+    pub output: Vec<f32>,
+    pub telemetry: MoeTelemetry,
+}
+
+pub fn execute_backend(
+    req: &MoeExecutionRequest,
+    scratch: &mut FusedMoeScratch,
+) -> MoeExecutionResult {
+    match req.backend {
+        MoeExecutionBackend::FusedQ4 => {
+            let selected_ids: Vec<usize> = req.selected.iter().map(|e| e.expert_id).collect();
+            let selected_weights: Vec<f32> =
+                req.selected.iter().map(|e| e.routing_weight).collect();
+            let (fused_out, timing) = fused_moe_q4_selected_cached(
+                &req.expert_pages,
+                req.hidden,
+                &selected_ids,
+                &selected_weights,
+                req.fused_down_mode,
+                Some(scratch),
+            );
+            let mut telemetry = MoeTelemetry::default();
+            telemetry.fused_gate_up_sec = timing.gate_up_sec;
+            telemetry.fused_swiglu_sec = timing.swiglu_sec;
+            telemetry.fused_down_accum_sec = timing.down_accum_sec;
+            telemetry.fused_alloc_sec = timing.alloc_sec;
+            telemetry.fused_stats_sec = timing.stats_sec;
+            MoeExecutionResult {
+                output: fused_out,
+                telemetry,
+            }
+        }
+        MoeExecutionBackend::LegacyDequantF32 => {
+            use rayon::prelude::*;
+            let results: Vec<Vec<f32>> = req
+                .expert_pages
+                .par_iter()
+                .zip(req.selected.par_iter())
+                .map(|(page, expert)| {
+                    let (gate, up, down) = dequantize_expert_f32(
+                        page.gate_up_bytes.as_ptr(),
+                        page.gate_up_bytes.len() as i32,
+                        page.down_bytes.as_ptr(),
+                        page.down_bytes.len() as i32,
+                    );
+
+                    let gate_out = f32_gemv(&gate, req.hidden, FFN_DIM, HIDDEN_DIM);
+                    let up_out = f32_gemv(&up, req.hidden, FFN_DIM, HIDDEN_DIM);
+                    let mut hidden = vec![0.0f32; FFN_DIM];
+                    for i in 0..FFN_DIM {
+                        hidden[i] = silu(gate_out[i]) * up_out[i];
+                    }
+                    let down_out = f32_gemv(&down, &hidden, HIDDEN_DIM, FFN_DIM);
+                    let mut scaled = down_out;
+                    for v in &mut scaled {
+                        *v *= expert.routing_weight;
+                    }
+                    scaled
+                })
+                .collect();
+
+            let mut output = vec![0.0f32; HIDDEN_DIM];
+            for expert_out in results {
+                for i in 0..HIDDEN_DIM {
+                    output[i] += expert_out[i];
+                }
+            }
+
+            MoeExecutionResult {
+                output,
+                telemetry: MoeTelemetry::default(),
+            }
+        }
+    }
+}
+
+pub fn call_moe_pipeline(
+    layer_idx: usize,
+    hidden: &[f32],
+    router_w: Option<&[f32]>,
+    selected_experts: Option<Vec<SelectedExpert>>,
+    backend: MoeExecutionBackend,
+    fused_down_mode: FusedDownMode,
+    mut residency_mgr: Option<&mut crate::expert_cache::ExpertResidencyManager>,
+    mmap_source: Option<(&[u8], &[u8])>,
+    scratch: &mut FusedMoeScratch,
+    token_id: usize,
+) -> MoeExecutionResult {
+    let call_moe_start = Instant::now();
+    let debug_cache_timing = std::env::var("OBJETA_DEBUG_CACHE_TIMING")
+        .map(|v| !(v == "0" || v.eq_ignore_ascii_case("false")))
+        .unwrap_or(false);
+
+    // 1 & 2. Router & Candidate Selection
+    let mut router_wall = 0.0;
+    let mut candidate_build_wall = 0.0;
+    let mut policy_select_wall = 0.0;
+
+    let selected = if let Some(sel) = selected_experts {
+        sel
+    } else {
+        let router_start = Instant::now();
+        let rw = router_w.expect("router_w must be provided if selected_experts is None");
+        let (expert_ids, routing_weights) = router_topk_cpu(rw, hidden, TOP_K);
+        router_wall = router_start.elapsed().as_secs_f64();
+
+        let candidate_build_start = Instant::now();
+        let sel: Vec<SelectedExpert> = expert_ids
+            .iter()
+            .zip(routing_weights.iter())
+            .map(|(&id, &w)| SelectedExpert {
+                expert_id: id,
+                routing_weight: w,
+            })
+            .collect();
+        candidate_build_wall = candidate_build_start.elapsed().as_secs_f64();
+        sel
+    };
+
+    let policy_start = Instant::now();
+    let (top_p, min_experts, max_experts) = pipeline_top_p_config();
+    let (
+        selected,
+        routing_mass_kept_pre_renorm,
+        routing_mass_dropped_pre_renorm,
+        routing_mass_sum_after_renorm,
+        selected_renormalized,
+    ) =
+        prune_selected_top_p(selected, top_p, min_experts, max_experts);
+    policy_select_wall = policy_start.elapsed().as_secs_f64();
+
+    let expert_ids: Vec<usize> = selected.iter().map(|e| e.expert_id).collect();
+    let routing_weights: Vec<f32> = selected.iter().map(|e| e.routing_weight).collect();
+
+    // 3. Residency Cache lookup
+    let cache_lookup_start = Instant::now();
+    let mut warm_hit_count = 0;
+    let mut cold_hit_count = 0;
+    let mut direct_cold_load_count = 0;
+    let mut eviction_count = 0;
+    let mut cache_key_build_wall = 0.0;
+    let mut cache_hit_lookup_wall = 0.0;
+    let mut cache_miss_load_wall = 0.0;
+    let mut cache_eviction_wall = 0.0;
+    let mut cache_insert_wall = 0.0;
+    let mut cache_page_clone_wall = 0.0;
+    let mut expert_pages = Vec::with_capacity(selected.len());
+
+    let (gu_mmap, down_mmap) = mmap_source.unwrap_or((&[], &[]));
+    let expert_total_bytes = (GU_EXPERT_BYTES + D_EXPERT_BYTES) as u64;
+
+    if let Some(ref mut mgr) = residency_mgr {
+        let prev_evictions = mgr.eviction_count;
+        for expert in &selected {
+            let key_build_start = Instant::now();
+            let key = crate::expert_cache::ExpertPageKey {
+                layer_id: layer_idx,
+                expert_id: expert.expert_id,
+                precision: 4,
+            };
+            if debug_cache_timing {
+                cache_key_build_wall += key_build_start.elapsed().as_secs_f64();
+            }
+
+            let was_hit = mgr.resident.contains_key(&key);
+            let (page, dbg) = mgr.ensure_resident_profiled(
+                layer_idx,
+                expert.expert_id,
+                4,
+                expert_total_bytes as usize,
+                token_id,
+                expert.routing_weight,
+                || {
+                    let gu_off = expert.expert_id * GU_EXPERT_BYTES;
+                    let d_off = expert.expert_id * D_EXPERT_BYTES;
+                    crate::expert_cache::ExpertPage {
+                        gate_up_bytes: Arc::from(&gu_mmap[gu_off..gu_off + GU_EXPERT_BYTES]),
+                        down_bytes: Arc::from(&down_mmap[d_off..d_off + D_EXPERT_BYTES]),
+                    }
+                },
+            );
+            if debug_cache_timing {
+                cache_hit_lookup_wall += dbg.cache_hit_lookup_sec;
+                cache_miss_load_wall += dbg.cache_miss_load_sec;
+                cache_eviction_wall += dbg.cache_eviction_sec;
+                cache_insert_wall += dbg.cache_insert_sec;
+                cache_page_clone_wall += dbg.cache_page_clone_sec;
+            }
+            expert_pages.push(page);
+            if was_hit {
+                warm_hit_count += 1;
+            } else {
+                cold_hit_count += 1;
+                direct_cold_load_count += 1;
+            }
+        }
+        eviction_count = mgr.eviction_count - prev_evictions;
+    } else {
+        // Standalone/Bypass path: just wrap passed-in raw expert weights into ExpertPages
+        for expert in &selected {
+            let gu_off = expert.expert_id * GU_EXPERT_BYTES;
+            let d_off = expert.expert_id * D_EXPERT_BYTES;
+            let gu_slice = Arc::from(&gu_mmap[gu_off..gu_off + GU_EXPERT_BYTES]);
+            let d_slice = Arc::from(&down_mmap[d_off..d_off + D_EXPERT_BYTES]);
+            expert_pages.push(crate::expert_cache::ExpertPage {
+                gate_up_bytes: gu_slice,
+                down_bytes: d_slice,
+            });
+            cold_hit_count += 1;
+        }
+    }
+    let cache_lookup_wall = cache_lookup_start.elapsed().as_secs_f64();
+
+    // 4. Execute Backend
+    let req = MoeExecutionRequest {
+        layer_idx,
+        hidden,
+        selected: selected.clone(),
+        expert_pages,
+        backend,
+        fused_down_mode,
+    };
+
+    let routed_exec_start = Instant::now();
+    let mut result = execute_backend(&req, scratch);
+    let routed_exec_wall = routed_exec_start.elapsed().as_secs_f64();
+
+    // 5. Finalize Telemetry
+    let stats_start = Instant::now();
+    let logical_expert_bytes_requested = selected.len() as u64 * expert_total_bytes;
+    let actual_expert_bytes_loaded = cold_hit_count as u64 * expert_total_bytes;
+    let resident_cache_bytes_reused = warm_hit_count as u64 * expert_total_bytes;
+    let resident_cache_resident_bytes = residency_mgr
+        .as_ref()
+        .map(|mgr| mgr.resident_bytes())
+        .unwrap_or(0);
+    let pinned_resident_bytes = residency_mgr
+        .as_ref()
+        .map(|mgr| mgr.pinned_resident_bytes())
+        .unwrap_or(0);
+    let token_window_peak_resident_bytes = residency_mgr
+        .as_ref()
+        .map(|mgr| mgr.token_window_peak_resident_bytes)
+        .unwrap_or(0);
+    let eviction_count_during_token = residency_mgr
+        .as_ref()
+        .map(|mgr| mgr.eviction_count_during_token)
+        .unwrap_or(0);
+    let eviction_count_at_token_end = residency_mgr
+        .as_ref()
+        .map(|mgr| mgr.eviction_count_at_token_end)
+        .unwrap_or(0);
+
+    let residency_group_size = residency_mgr
+        .as_ref()
+        .map(|m| m.residency_group_size)
+        .unwrap_or(1);
+    let group_preresolve_wall_ms = residency_mgr
+        .as_ref()
+        .map(|m| m.group_preresolve_wall_ms)
+        .unwrap_or(0.0);
+    let group_pinned_bytes = residency_mgr
+        .as_ref()
+        .map(|m| m.group_pinned_bytes)
+        .unwrap_or(0);
+    let group_preloaded_expert_count = residency_mgr
+        .as_ref()
+        .map(|m| m.group_preloaded_expert_count)
+        .unwrap_or(0);
+    let group_cache_miss_count = residency_mgr
+        .as_ref()
+        .map(|m| m.group_cache_miss_count)
+        .unwrap_or(0);
+    let group_preresolve_skipped_by_budget = residency_mgr
+        .as_ref()
+        .map(|m| m.group_preresolve_skipped_by_budget)
+        .unwrap_or(0);
+    let group_preresolve_requested_bytes = residency_mgr
+        .as_ref()
+        .map(|m| m.group_preresolve_requested_bytes)
+        .unwrap_or(0);
+    let group_preresolve_loaded_bytes = residency_mgr
+        .as_ref()
+        .map(|m| m.group_preresolve_loaded_bytes)
+        .unwrap_or(0);
+    let group_preresolve_hit_rate = residency_mgr
+        .as_ref()
+        .map(|m| m.group_preresolve_hit_rate)
+        .unwrap_or(0.0);
+
+    let dequantized_scratch_bytes = if backend == MoeExecutionBackend::FusedQ4 {
+        0
+    } else {
+        let ffn_dim = 512;
+        let gate_up_f32_len = 2 * ffn_dim * HIDDEN_DIM;
+        let down_f32_len = HIDDEN_DIM * ffn_dim;
+        let per_expert = (gate_up_f32_len + down_f32_len) * std::mem::size_of::<f32>();
+        selected.len() as u64 * per_expert as u64
+    };
+
+    // Global frequency tracking
+    if let Some(ref trackers) = unsafe { GLOBAL_FREQ.as_ref() } {
+        if layer_idx < trackers.len() {
+            let mut freq = trackers[layer_idx].write().unwrap();
+            for &eid in &expert_ids {
+                *freq.entry(eid).or_insert(0) += 1;
+            }
+        }
+    }
+
+    let stats_wall = stats_start.elapsed().as_secs_f64();
+
+    result.telemetry = MoeTelemetry {
+        call_moe_total_wall: call_moe_start.elapsed().as_secs_f64(),
+        router_wall,
+        candidate_build_wall,
+        policy_select_wall,
+        cache_lookup_wall,
+        cache_key_build_wall,
+        cache_hit_lookup_wall,
+        cache_miss_load_wall,
+        cache_eviction_wall,
+        cache_insert_wall,
+        cache_page_clone_wall,
+        routed_exec_wall,
+        accumulate_wall: 0.0,
+        stats_wall,
+        logical_expert_bytes_requested,
+        actual_expert_bytes_loaded,
+        resident_cache_bytes_reused,
+        resident_cache_resident_bytes,
+        pinned_resident_bytes,
+        token_window_peak_resident_bytes,
+        dequantized_scratch_bytes,
+        warm_hit_count,
+        cold_hit_count,
+        direct_cold_load_count,
+        eviction_count,
+        eviction_count_during_token,
+        eviction_count_at_token_end,
+        selected_expert_count: selected.len(),
+        routing_mass_kept: routing_mass_kept_pre_renorm,
+        routing_mass_dropped: routing_mass_dropped_pre_renorm,
+        routing_mass_kept_pre_renorm,
+        routing_mass_dropped_pre_renorm,
+        routing_mass_sum_after_renorm,
+        selected_renormalized,
+        selected_expert_ids: expert_ids,
+        selected_expert_weights: routing_weights,
+        residency_group_size,
+        group_preresolve_wall_ms,
+        group_pinned_bytes,
+        group_preloaded_expert_count,
+        group_cache_miss_count,
+        group_preresolve_skipped_by_budget,
+        group_preresolve_requested_bytes,
+        group_preresolve_loaded_bytes,
+        group_preresolve_hit_rate,
+        ..result.telemetry
+    };
+
+    result
 }

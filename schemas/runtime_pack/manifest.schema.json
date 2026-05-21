@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Objeta Runtime Pack Manifest",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "pack_type",
+    "model_family",
+    "model_name",
+    "target",
+    "created_at",
+    "files"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "pack_type": { "type": "string", "const": "objeta_runtime_pack" },
+    "model_family": { "type": "string" },
+    "model_name": { "type": "string" },
+    "target": { "type": "string" },
+    "created_at": { "type": "string" },
+    "files": {
+      "type": "object",
+      "required": [
+        "expert_layout",
+        "expert_importance",
+        "expert_coresidency",
+        "residency_plan",
+        "phase_policy",
+        "runtime_profile"
+      ],
+      "properties": {
+        "expert_layout": { "type": "string" },
+        "expert_importance": { "type": "string" },
+        "expert_coresidency": { "type": "string" },
+        "residency_plan": { "type": "string" },
+        "phase_policy": { "type": "string" },
+        "runtime_profile": { "type": "string" }
+      }
+    },
+    "notes": { "type": "string" }
+  }
+}

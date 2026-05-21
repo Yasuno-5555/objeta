@@ -26,8 +26,8 @@ use std::fs::{self, File};
 use std::io;
 use std::path::PathBuf;
 use std::ptr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread;
 
 // ── Error type ────────────────────────────────────────────────────────
@@ -41,7 +41,9 @@ pub enum ExpertStoreError {
 }
 
 impl From<io::Error> for ExpertStoreError {
-    fn from(e: io::Error) -> Self { ExpertStoreError::Io(e) }
+    fn from(e: io::Error) -> Self {
+        ExpertStoreError::Io(e)
+    }
 }
 
 // ── ExpertStore ───────────────────────────────────────────────────────
@@ -79,14 +81,14 @@ pub struct TransferStats {
     pub layers_loaded: u64,
     pub bytes_transferred: u64,
     pub prefetches_completed: u64,
-    pub prefetch_stalls: u64,  // Times we had to wait for prefetch
+    pub prefetch_stalls: u64, // Times we had to wait for prefetch
     pub total_load_ms: u64,
 }
 
 impl ExpertStore {
     /// Get transfer statistics.
     pub fn stats(&self) -> TransferStats {
-        TransferStats::default()  // TODO: track actual stats
+        TransferStats::default() // TODO: track actual stats
     }
 
     /// Swap double buffers: unload previous layer, ensure next layer is loaded.
@@ -140,23 +142,28 @@ impl ExpertStore {
     /// File format: [gate_up_proj (n_experts * 2 * ffn * hidden * sizeof(dtype))]
     ///               [down_proj (n_experts * hidden * ffn * sizeof(dtype))]
     pub fn register_layer(&mut self, layer_idx: u32, filepath: &str, size_bytes: u64) {
-        self.layer_files.insert(layer_idx, (PathBuf::from(filepath), size_bytes));
+        self.layer_files
+            .insert(layer_idx, (PathBuf::from(filepath), size_bytes));
     }
 
     /// Load a layer's expert weights from SSD into a Metal buffer.
     ///
     /// Uses mmap for efficient SSD read, then copies to the provided Metal buffer.
     /// Returns the Metal buffer pointer + size.
-    pub fn load_layer(&mut self, layer_idx: u32, metal_buffer_ptr: u64) -> Result<MetalBuffer, ExpertStoreError> {
-        let (filepath, size_bytes) = self.layer_files.get(&layer_idx)
+    pub fn load_layer(
+        &mut self,
+        layer_idx: u32,
+        metal_buffer_ptr: u64,
+    ) -> Result<MetalBuffer, ExpertStoreError> {
+        let (filepath, size_bytes) = self
+            .layer_files
+            .get(&layer_idx)
             .ok_or(ExpertStoreError::LayerNotFound(layer_idx))?
             .clone();
 
         // Memory-map the file (zero-copy SSD access via OS page cache)
         let file = File::open(&filepath)?;
-        let mmap = unsafe {
-            memmap2::Mmap::map(&file)?
-        };
+        let mmap = unsafe { memmap2::Mmap::map(&file)? };
 
         // Copy from mmap to Metal buffer (unified memory, single copy)
         unsafe {
@@ -179,7 +186,9 @@ impl ExpertStore {
     /// Load a layer directly from a memory-mapped file (no Metal buffer copy yet).
     /// Returns a pointer to the mmap'd region.
     pub fn mmap_layer(&self, layer_idx: u32) -> Result<(*const u8, u64), ExpertStoreError> {
-        let (filepath, _size_bytes) = self.layer_files.get(&layer_idx)
+        let (filepath, _size_bytes) = self
+            .layer_files
+            .get(&layer_idx)
             .ok_or(ExpertStoreError::LayerNotFound(layer_idx))?
             .clone();
 
@@ -196,7 +205,8 @@ impl ExpertStore {
 
     /// Get a loaded layer's Metal buffer.
     pub fn get_buffer(&self, layer_idx: u32) -> Result<&MetalBuffer, ExpertStoreError> {
-        self.loaded_buffers.get(&layer_idx)
+        self.loaded_buffers
+            .get(&layer_idx)
             .ok_or(ExpertStoreError::BufferNotLoaded(layer_idx))
     }
 
@@ -209,7 +219,11 @@ impl ExpertStore {
     ///
     /// The prefetch worker loads the layer's expert weights from SSD
     /// into the Metal buffer while the GPU is computing the current layer.
-    pub fn prefetch_async(&mut self, layer_idx: u32, metal_buffer_ptr: u64) -> Result<(), ExpertStoreError> {
+    pub fn prefetch_async(
+        &mut self,
+        layer_idx: u32,
+        metal_buffer_ptr: u64,
+    ) -> Result<(), ExpertStoreError> {
         // Check if layer file exists
         if !self.layer_files.contains_key(&layer_idx) {
             return Err(ExpertStoreError::LayerNotFound(layer_idx));
@@ -286,8 +300,15 @@ impl Drop for ExpertStore {
 
 /// Create a new ExpertStore. Returns opaque pointer.
 #[no_mangle]
-pub extern "C" fn expert_store_create(ssd_dir: *const std::os::raw::c_char, n_layers: u32) -> *mut ExpertStore {
-    let dir = unsafe { std::ffi::CStr::from_ptr(ssd_dir).to_string_lossy().into_owned() };
+pub extern "C" fn expert_store_create(
+    ssd_dir: *const std::os::raw::c_char,
+    n_layers: u32,
+) -> *mut ExpertStore {
+    let dir = unsafe {
+        std::ffi::CStr::from_ptr(ssd_dir)
+            .to_string_lossy()
+            .into_owned()
+    };
     let store = Box::new(ExpertStore::new(&dir, n_layers));
     Box::into_raw(store)
 }
@@ -301,7 +322,11 @@ pub extern "C" fn expert_store_register_layer(
     size_bytes: u64,
 ) -> i32 {
     let store = unsafe { &mut *store };
-    let path = unsafe { std::ffi::CStr::from_ptr(filepath).to_string_lossy().into_owned() };
+    let path = unsafe {
+        std::ffi::CStr::from_ptr(filepath)
+            .to_string_lossy()
+            .into_owned()
+    };
     store.register_layer(layer_idx, &path, size_bytes);
     0
 }
@@ -322,24 +347,17 @@ pub extern "C" fn expert_store_load_layer(
 
 /// Get a loaded buffer's pointer. Returns 0 if not loaded.
 #[no_mangle]
-pub extern "C" fn expert_store_get_buffer_ptr(
-    store: *const ExpertStore,
-    layer_idx: u32,
-) -> u64 {
+pub extern "C" fn expert_store_get_buffer_ptr(store: *const ExpertStore, layer_idx: u32) -> u64 {
     let store = unsafe { &*store };
-    store.get_buffer(layer_idx)
-        .map(|b| b.ptr)
-        .unwrap_or(0)
+    store.get_buffer(layer_idx).map(|b| b.ptr).unwrap_or(0)
 }
 
 /// Get a loaded buffer's size. Returns 0 if not loaded.
 #[no_mangle]
-pub extern "C" fn expert_store_get_buffer_size(
-    store: *const ExpertStore,
-    layer_idx: u32,
-) -> u64 {
+pub extern "C" fn expert_store_get_buffer_size(store: *const ExpertStore, layer_idx: u32) -> u64 {
     let store = unsafe { &*store };
-    store.get_buffer(layer_idx)
+    store
+        .get_buffer(layer_idx)
         .map(|b| b.size_bytes)
         .unwrap_or(0)
 }
@@ -362,7 +380,11 @@ pub extern "C" fn expert_store_prefetch_async(
 #[no_mangle]
 pub extern "C" fn expert_store_prefetch_done(store: *const ExpertStore) -> i32 {
     let store = unsafe { &*store };
-    if store.prefetch_done() { 1 } else { 0 }
+    if store.prefetch_done() {
+        1
+    } else {
+        0
+    }
 }
 
 /// Wait for async prefetch to complete.
@@ -405,13 +427,18 @@ pub extern "C" fn expert_store_swap_layer(
 
 /// Get transfer statistics as JSON string. Caller must free with expert_store_free_stats.
 #[no_mangle]
-pub extern "C" fn expert_store_get_stats_json(store: *const ExpertStore) -> *mut std::os::raw::c_char {
+pub extern "C" fn expert_store_get_stats_json(
+    store: *const ExpertStore,
+) -> *mut std::os::raw::c_char {
     let store = unsafe { &*store };
     let stats = store.stats();
     let json = format!(
         r#"{{"layers_loaded":{},"bytes_transferred":{},"prefetches_completed":{},"prefetch_stalls":{},"total_load_ms":{}}}"#,
-        stats.layers_loaded, stats.bytes_transferred, stats.prefetches_completed,
-        stats.prefetch_stalls, stats.total_load_ms
+        stats.layers_loaded,
+        stats.bytes_transferred,
+        stats.prefetches_completed,
+        stats.prefetch_stalls,
+        stats.total_load_ms
     );
     let c_str = std::ffi::CString::new(json).unwrap();
     c_str.into_raw()
@@ -421,7 +448,9 @@ pub extern "C" fn expert_store_get_stats_json(store: *const ExpertStore) -> *mut
 #[no_mangle]
 pub extern "C" fn expert_store_free_stats(ptr: *mut std::os::raw::c_char) {
     if !ptr.is_null() {
-        unsafe { let _ = std::ffi::CString::from_raw(ptr); }
+        unsafe {
+            let _ = std::ffi::CString::from_raw(ptr);
+        }
     }
 }
 

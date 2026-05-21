@@ -1,0 +1,12 @@
+[package]
+name = "objeta-cuda"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+objeta-parser = { path = "../objeta-parser" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+cudarc = { version = "0.19.7", default-features = false, features = ["std", "driver", "runtime", "nvrtc", "fallback-dynamic-loading", "cuda-version-from-build-system"] }

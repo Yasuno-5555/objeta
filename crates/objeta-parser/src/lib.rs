@@ -13,6 +13,9 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
+pub mod deepseek;
+pub mod sanity;
+
 // ── Tensor index entry ────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
@@ -31,7 +34,9 @@ pub enum Dtype {
     BF16,
     I64,
     I32,
+    I8,
     U8,
+    F8_E8M0,
     BOOL,
 }
 
@@ -41,7 +46,7 @@ impl Dtype {
             Dtype::F32 | Dtype::I32 => 4,
             Dtype::F16 | Dtype::BF16 => 2,
             Dtype::I64 => 8,
-            Dtype::U8 | Dtype::BOOL => 1,
+            Dtype::I8 | Dtype::U8 | Dtype::F8_E8M0 | Dtype::BOOL => 1,
         }
     }
 
@@ -52,7 +57,9 @@ impl Dtype {
             "BF16" | "BFLOAT16" => Ok(Dtype::BF16),
             "I64" | "INT64" => Ok(Dtype::I64),
             "I32" | "INT32" => Ok(Dtype::I32),
+            "I8" | "INT8" => Ok(Dtype::I8),
             "U8" | "UINT8" => Ok(Dtype::U8),
+            "F8_E8M0" => Ok(Dtype::F8_E8M0),
             "BOOL" => Ok(Dtype::BOOL),
             other => Err(format!("Unknown dtype: {}", other)),
         }
@@ -107,7 +114,7 @@ impl ModelWeights {
                 .filter(|e| {
                     e.file_name()
                         .to_str()
-                        .map_or(false, |n| n.ends_with(".safetensors"))
+                        .is_some_and(|n| n.ends_with(".safetensors"))
                 })
                 .collect();
             sf_files.sort_by_key(|e| e.file_name());
@@ -129,7 +136,7 @@ impl ModelWeights {
                     let nbytes = entry.data_offsets.1 - entry.data_offsets.0;
                     let info = TensorInfo {
                         dtype: Dtype::from_str(&entry.dtype)
-                            .map_err(|e| ObjetaError::Parse(e))?,
+                            .map_err(ObjetaError::Parse)?,
                         shape: entry.shape,
                         offset: data_start + entry.data_offsets.0,
                         nbytes,
@@ -154,7 +161,7 @@ impl ModelWeights {
                 let nbytes = entry.data_offsets.1 - entry.data_offsets.0;
                 let info = TensorInfo {
                     dtype: Dtype::from_str(&entry.dtype)
-                        .map_err(|e| ObjetaError::Parse(e))?,
+                        .map_err(ObjetaError::Parse)?,
                     shape: entry.shape,
                     offset: data_start + entry.data_offsets.0,
                     nbytes,
@@ -356,7 +363,7 @@ impl ModelConfig {
         };
 
         let content = std::fs::read_to_string(&config_path)
-            .map_err(|e| ObjetaError::Io(e))?;
+            .map_err(ObjetaError::Io)?;
         let mut config: ModelConfig = serde_json::from_str(&content)
             .map_err(|e| ObjetaError::Parse(format!("invalid config.json: {}", e)))?;
 

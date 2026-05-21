@@ -2,6 +2,7 @@
 members = [
     "crates/objeta-aot",
     "crates/objeta-core",
+    "crates/objeta-cuda",
     "crates/objeta-parser",
     "crates/objeta-analysis",
     "crates/objeta-phase",

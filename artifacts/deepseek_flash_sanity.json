@@ -1,0 +1,32 @@
+{
+  "layout_kind": "unknown",
+  "num_layers": 43,
+  "num_experts": 256,
+  "top_k": 6,
+  "hidden_size": 4096,
+  "intermediate_size": 2048,
+  "tensor_counts": {
+    "router": 0,
+    "expert": 0,
+    "shared_expert": 0,
+    "other": 69187
+  },
+  "working_set": {
+    "single_expert_bytes": 0,
+    "current_layer_selected_bytes": 0,
+    "prefetch_window_2_layers_bytes": 0,
+    "prefetch_window_4_layers_bytes": 0,
+    "full_pass_selected_bytes": 0
+  },
+  "cache_fit": {
+    "1GB": true,
+    "2GB": true,
+    "4GB": true,
+    "8GB": true
+  },
+  "warnings": [
+    "Expert layout kind is 'unknown' — unable to identify explicit or packed expert tensors.",
+    "No router tensors found — model may not use MoE routing, or router tensors were not classified."
+  ],
+  "compatible_with_objeta_cuda_moe": false
+}

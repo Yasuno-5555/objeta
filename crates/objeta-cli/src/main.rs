@@ -67,6 +67,22 @@ enum Command {
         #[arg(long, default_value = "3.5")]
         ffn_bits: f64,
     },
+    /// Parse DeepSeek V4 Flash metadata and tensor layout
+    ParseDeepseek {
+        /// Path to DeepSeek V4 Flash model directory
+        model_dir: PathBuf,
+        /// Path to output directory to write layout JSON files
+        #[arg(short, long, default_value = ".")]
+        output_dir: PathBuf,
+    },
+    /// Run inventory sanity report on parse-deepseek output directory
+    SanityReport {
+        /// Directory containing deepseek_v4_flash_*.json files
+        input_dir: PathBuf,
+        /// Optional path to write JSON sanity report
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -94,7 +110,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             cmd_strategy(&profile, &output)?;
         }
+        Command::ParseDeepseek { model_dir, output_dir } => {
+            cmd_parse_deepseek(&model_dir, &output_dir)?;
+        }
+        Command::SanityReport { input_dir, output } => {
+            cmd_sanity_report(&input_dir, output.as_deref())?;
+        }
     }
+    Ok(())
+}
+
+fn cmd_parse_deepseek(
+    model_dir: &std::path::Path, output_dir: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    objeta_parser::deepseek::parse_deepseek_v4_flash(model_dir, output_dir)?;
+    println!("Parsed DeepSeek V4 Flash metadata from {}", model_dir.display());
+    println!("Wrote output layout JSON files to {}", output_dir.display());
+    Ok(())
+}
+
+fn cmd_sanity_report(
+    input_dir: &std::path::Path,
+    output: Option<&std::path::Path>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let report = objeta_parser::sanity::run_sanity_report(input_dir)?;
+    objeta_parser::sanity::print_sanity_report(&report);
+
+    if let Some(out_path) = output {
+        let json = serde_json::to_string_pretty(&report)?;
+        std::fs::write(out_path, &json)?;
+        println!("Wrote JSON sanity report to: {}", out_path.display());
+    }
+
     Ok(())
 }
 

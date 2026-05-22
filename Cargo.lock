@@ -540,9 +540,12 @@ dependencies = [
  "nalgebra",
  "objeta-analysis",
  "objeta-core",
+ "objeta-cuda",
  "objeta-parser",
  "rand",
  "rand_distr",
+ "serde",
+ "serde_json",
  "tracing",
  "tracing-subscriber",
 ]

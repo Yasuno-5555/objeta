@@ -15,12 +15,19 @@ path = "src/verify_all_layers.rs"
 name = "diagnose_shared_fp8"
 path = "src/diagnose_shared_fp8.rs"
 
+[[bin]]
+name = "deepseek_e2e"
+path = "src/deepseek_e2e.rs"
+
 [dependencies]
 objeta-core.workspace = true
 objeta-parser.workspace = true
+objeta-cuda = { path = "../crates/objeta-cuda" }
 objeta-analysis.workspace = true
 nalgebra.workspace = true
 rand.workspace = true
 rand_distr.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

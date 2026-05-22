@@ -14,12 +14,20 @@ use crate::{cuda_map_err, CudaError, CudaErrorKind, Result};
 const Q4_KERNEL_SRC: &str = include_str!("../kernels/q4_gemv.cu");
 const Q5_KERNEL_SRC: &str = include_str!("../kernels/q5_gemv.cu");
 const IQ3_KERNEL_SRC: &str = include_str!("../kernels/iq3_gemv.cu");
+const FP4_KERNEL_SRC: &str = include_str!("../kernels/deepseek_fp4_gemv.cu");
+const ACT_QUANT_KERNEL_SRC: &str = include_str!("../kernels/deepseek_act_quant.cu");
+const ACT_QUANT_KERNEL_NAME: &str = "act_quant_fp8_e4m3_e8m0";
+const FP8_ACT_FP4_WT_KERNEL_SRC: &str = include_str!("../kernels/deepseek_fp8_act_fp4_weight_gemv.cu");
+const FP8_ACT_FP4_WT_KERNEL_NAME: &str = "fp8_act_fp4_weight_gemv";
+const FP8_ACT_FP8_WT_KERNEL_SRC: &str = include_str!("../kernels/deepseek_fp8_act_fp8_weight_gemv.cu");
+const FP8_ACT_FP8_WT_KERNEL_NAME: &str = "fp8_act_fp8_weight_gemv";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum QuantFormat {
     Q4_0,
     Q5_0,
     IQ3_0,
+    DeepSeekFp4E2M1,
 }
 
 impl QuantFormat {
@@ -28,6 +36,7 @@ impl QuantFormat {
             QuantFormat::Q4_0 => 32,
             QuantFormat::Q5_0 => 32,
             QuantFormat::IQ3_0 => 32,
+            QuantFormat::DeepSeekFp4E2M1 => 32,
         }
     }
 
@@ -36,6 +45,7 @@ impl QuantFormat {
             QuantFormat::Q4_0 => 18,
             QuantFormat::Q5_0 => 22,
             QuantFormat::IQ3_0 => 14,
+            QuantFormat::DeepSeekFp4E2M1 => 17,
         }
     }
 
@@ -44,6 +54,7 @@ impl QuantFormat {
             QuantFormat::Q4_0 => "q4_gemv",
             QuantFormat::Q5_0 => "q5_gemv",
             QuantFormat::IQ3_0 => "iq3_gemv",
+            QuantFormat::DeepSeekFp4E2M1 => "fp4_e2m1_gemv",
         }
     }
 
@@ -52,6 +63,34 @@ impl QuantFormat {
             QuantFormat::Q4_0 => "q4_0",
             QuantFormat::Q5_0 => "q5_0",
             QuantFormat::IQ3_0 => "iq3_0",
+            QuantFormat::DeepSeekFp4E2M1 => "deepseek_fp4_e2m1",
+        }
+    }
+
+    pub fn packed_values_per_byte(&self) -> usize {
+        match self {
+            QuantFormat::Q4_0 => 2,
+            QuantFormat::Q5_0 => 2,
+            QuantFormat::IQ3_0 => 2,
+            QuantFormat::DeepSeekFp4E2M1 => 2,
+        }
+    }
+
+    pub fn scale_dtype(&self) -> &'static str {
+        match self {
+            QuantFormat::Q4_0 => "F16",
+            QuantFormat::Q5_0 => "F16",
+            QuantFormat::IQ3_0 => "F16",
+            QuantFormat::DeepSeekFp4E2M1 => "F8_E8M0",
+        }
+    }
+
+    pub fn nibble_order(&self) -> &'static str {
+        match self {
+            QuantFormat::Q4_0 => "low_first",
+            QuantFormat::Q5_0 => "low_first",
+            QuantFormat::IQ3_0 => "low_first",
+            QuantFormat::DeepSeekFp4E2M1 => "low_first",
         }
     }
 }
@@ -84,6 +123,10 @@ impl QGemvShape {
 
     pub fn iq3_0(rows: usize, cols: usize) -> Self {
         Self::new(QuantFormat::IQ3_0, rows, cols)
+    }
+
+    pub fn deepseek_fp4(rows: usize, cols: usize) -> Self {
+        Self::new(QuantFormat::DeepSeekFp4E2M1, rows, cols)
     }
 
     pub fn blocks_per_row(&self) -> usize {
@@ -143,6 +186,7 @@ pub struct QGemvReport {
 struct QuantKernelModule {
     _module: Arc<CudaModule>,
     gemv: CudaFunction,
+    gemv_split: Option<CudaFunction>,
 }
 
 #[derive(Debug)]
@@ -152,6 +196,7 @@ pub struct QuantBackend {
     q4_module: Mutex<Option<QuantKernelModule>>,
     q5_module: Mutex<Option<QuantKernelModule>>,
     iq3_module: Mutex<Option<QuantKernelModule>>,
+    fp4_module: Mutex<Option<QuantKernelModule>>,
 }
 
 impl QuantBackend {
@@ -162,8 +207,12 @@ impl QuantBackend {
             q4_module: Mutex::new(None),
             q5_module: Mutex::new(None),
             iq3_module: Mutex::new(None),
+            fp4_module: Mutex::new(None),
         }
     }
+
+    pub fn context(&self) -> &Arc<CudaContext> { &self.context }
+    pub fn device_info(&self) -> &CudaDeviceInfo { &self.device_info }
 
     pub fn status(&self) -> Result<()> {
         Ok(())
@@ -179,6 +228,9 @@ impl QuantBackend {
             }
             QuantFormat::IQ3_0 => {
                 let _unused = self.iq3_module()?;
+            }
+            QuantFormat::DeepSeekFp4E2M1 => {
+                let _unused = self.fp4_module()?;
             }
         }
         Ok(())
@@ -282,6 +334,7 @@ impl QuantBackend {
             QuantFormat::Q4_0 => self.q4_module()?,
             QuantFormat::Q5_0 => self.q5_module()?,
             QuantFormat::IQ3_0 => self.iq3_module()?,
+            QuantFormat::DeepSeekFp4E2M1 => self.fp4_module()?,
         };
         let module = module_guard.as_ref().expect("kernel module must exist");
         let rows = shape.rows as u32;
@@ -312,6 +365,49 @@ impl QuantBackend {
         Ok(())
     }
 
+    pub(crate) fn launch_kernel_split_fp4(
+        &self,
+        stream: &Arc<CudaStream>,
+        qweights: &DeviceBuffer<u8>,
+        scales: &DeviceBuffer<u8>,
+        x: &DeviceBuffer<f32>,
+        y: &mut DeviceBuffer<f32>,
+        rows: usize,
+        cols: usize,
+    ) -> Result<()> {
+        let module_guard = self.fp4_module()?;
+        let module = module_guard.as_ref().expect("fp4 kernel module must exist");
+        let gemv_split = module.gemv_split.as_ref().expect("gemv_split function must exist");
+        
+        let rows_u32 = rows as u32;
+        let cols_u32 = cols as u32;
+        let blocks_per_row = (cols / 32) as u32;
+        
+        let cfg = LaunchConfig {
+            grid_dim: (rows_u32, 1, 1),
+            block_dim: (32, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        cuda_map_err!(
+            CudaErrorKind::Driver,
+            "launch fp4_e2m1_gemv_split kernel",
+            unsafe {
+                stream
+                    .launch_builder(gemv_split)
+                    .arg(&qweights.raw)
+                    .arg(&scales.raw)
+                    .arg(&x.raw)
+                    .arg(&mut y.raw)
+                    .arg(&rows_u32)
+                    .arg(&cols_u32)
+                    .arg(&blocks_per_row)
+                    .launch(cfg)
+            }
+        )?;
+        Ok(())
+    }
+
+
     fn q4_module(&self) -> Result<MutexGuard<'_, Option<QuantKernelModule>>> {
         self.ensure_module(
             &self.q4_module,
@@ -339,6 +435,16 @@ impl QuantBackend {
             IQ3_KERNEL_SRC,
             "objeta_cuda_iq3_gemv.cu",
             "iq3_gemv_f32_accum",
+        )
+    }
+
+    fn fp4_module(&self) -> Result<MutexGuard<'_, Option<QuantKernelModule>>> {
+        self.ensure_module(
+            &self.fp4_module,
+            QuantFormat::DeepSeekFp4E2M1,
+            FP4_KERNEL_SRC,
+            "objeta_cuda_deepseek_fp4_gemv.cu",
+            "fp4_e2m1_gemv",
         )
     }
 
@@ -377,9 +483,20 @@ impl QuantBackend {
                 format!("load {} kernel function {}", format.format_label(), function_name),
                 module.load_function(function_name)
             )?;
+            let gemv_split = if format == QuantFormat::DeepSeekFp4E2M1 {
+                let func = cuda_map_err!(
+                    CudaErrorKind::Driver,
+                    "load fp4 split kernel function fp4_e2m1_gemv_split".to_string(),
+                    module.load_function("fp4_e2m1_gemv_split")
+                )?;
+                Some(func)
+            } else {
+                None
+            };
             *guard = Some(QuantKernelModule {
                 _module: module,
                 gemv,
+                gemv_split,
             });
         }
         Ok(guard)
@@ -443,6 +560,22 @@ pub fn quantize_matrix_cpu(
                 }
             }
         }
+        QuantFormat::DeepSeekFp4E2M1 => {
+            for row in 0..shape.rows {
+                let src = &matrix[row * shape.cols..(row + 1) * shape.cols];
+                for block_idx in 0..shape.blocks_per_row() {
+                    let src_block: &[f32; 32] = src
+                        [block_idx * 32..(block_idx + 1) * 32]
+                        .try_into()
+                        .expect("fixed-size fp4 block");
+                    let dst_offset =
+                        row * shape.quantized_row_bytes() + block_idx * shape.block_bytes;
+                    let mut dst_block = [0u8; 17];
+                    fp4_quantize_block(src_block, &mut dst_block);
+                    out[dst_offset..dst_offset + 17].copy_from_slice(&dst_block);
+                }
+            }
+        }
     }
     Ok(out)
 }
@@ -457,6 +590,10 @@ pub fn q5_quantize_matrix_cpu(matrix: &[f32], shape: QGemvShape) -> Result<Vec<u
 
 pub fn iq3_quantize_matrix_cpu(matrix: &[f32], shape: QGemvShape) -> Result<Vec<u8>> {
     quantize_matrix_cpu(QuantFormat::IQ3_0, matrix, shape)
+}
+
+pub fn fp4_quantize_matrix_cpu(matrix: &[f32], shape: QGemvShape) -> Result<Vec<u8>> {
+    quantize_matrix_cpu(QuantFormat::DeepSeekFp4E2M1, matrix, shape)
 }
 
 pub fn dense_gemv_cpu(matrix: &[f32], x: &[f32], shape: QGemvShape) -> Result<Vec<f32>> {
@@ -502,6 +639,7 @@ pub fn gemv_cpu(
             QuantFormat::Q4_0 => q4_dot_row(row_q, x, shape.cols, shape.blocks_per_row()),
             QuantFormat::Q5_0 => q5_dot_row(row_q, x, shape.cols, shape.blocks_per_row()),
             QuantFormat::IQ3_0 => iq3_dot_row(row_q, x, shape.cols, shape.blocks_per_row()),
+            QuantFormat::DeepSeekFp4E2M1 => fp4_dot_row(row_q, x, shape.cols, shape.blocks_per_row()),
         };
     }
     Ok(out)
@@ -519,11 +657,19 @@ pub fn iq3_gemv_cpu(qweights: &[u8], x: &[f32], shape: QGemvShape) -> Result<Vec
     gemv_cpu(QuantFormat::IQ3_0, qweights, x, shape)
 }
 
+pub fn fp4_gemv_cpu(qweights: &[u8], x: &[f32], shape: QGemvShape) -> Result<Vec<f32>> {
+    gemv_cpu(QuantFormat::DeepSeekFp4E2M1, qweights, x, shape)
+}
+
 pub fn q4_compare(reference: &[f32], actual: &[f32]) -> Result<QGemvNumerics> {
     compare_outputs(reference, actual)
 }
 
 pub fn q5_compare(reference: &[f32], actual: &[f32]) -> Result<QGemvNumerics> {
+    compare_outputs(reference, actual)
+}
+
+pub fn fp4_compare(reference: &[f32], actual: &[f32]) -> Result<QGemvNumerics> {
     compare_outputs(reference, actual)
 }
 
@@ -732,6 +878,76 @@ fn iq3_quantize_block(src: &[f32; 32], dst: &mut [u8; 14]) {
     }
 }
 
+const FP4_TABLE: [f32; 16] = [
+    0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0,
+    -0.0, -0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0,
+];
+
+fn decode_f8_e8m0(raw: u8) -> f32 {
+    if raw == 0 {
+        f32::from_bits(1 << 22)
+    } else {
+        f32::from_bits((raw as u32) << 23)
+    }
+}
+
+fn quantize_val(val: f32, scale: f32) -> u8 {
+    let scaled = val / scale;
+    let mut best_q = 0;
+    let mut min_diff = f32::INFINITY;
+    for q in 0..16 {
+        let diff = (scaled - FP4_TABLE[q]).abs();
+        if diff < min_diff {
+            min_diff = diff;
+            best_q = q;
+        }
+    }
+    best_q as u8
+}
+
+fn fp4_quantize_block(src: &[f32; 32], dst: &mut [u8; 17]) {
+    let mut amax = 0.0f32;
+    for &v in src {
+        amax = amax.max(v.abs());
+    }
+    let raw = if amax > 0.0 && amax.is_finite() {
+        let k = (amax / 6.0).log2().ceil() as i32;
+        (k + 127).clamp(0, 255) as u8
+    } else {
+        0
+    };
+    dst[0] = raw;
+    let actual_scale = decode_f8_e8m0(raw);
+    for i in 0..16 {
+        let q0 = quantize_val(src[i * 2], actual_scale);
+        let q1 = quantize_val(src[i * 2 + 1], actual_scale);
+        dst[1 + i] = q0 | (q1 << 4);
+    }
+}
+
+fn fp4_dot_row(row_q: &[u8], x: &[f32], cols: usize, blocks_per_row: usize) -> f32 {
+    let mut sum = 0.0f32;
+    for block_idx in 0..blocks_per_row {
+        let block_start = block_idx * 17;
+        let scale_raw = row_q[block_start];
+        let scale = decode_f8_e8m0(scale_raw);
+        for lane in 0..32 {
+            let col = block_idx * 32 + lane;
+            if col < cols {
+                let packed = row_q[block_start + 1 + (lane / 2)];
+                let q = if lane % 2 == 0 {
+                    packed & 0x0F
+                } else {
+                    packed >> 4
+                };
+                let w = FP4_TABLE[q as usize] * scale;
+                sum += w * x[col];
+            }
+        }
+    }
+    sum
+}
+
 fn q4_dot_row(row_q: &[u8], x: &[f32], cols: usize, blocks_per_row: usize) -> f32 {
     let mut sum = 0.0f32;
     for block_idx in 0..blocks_per_row {
@@ -897,10 +1113,499 @@ pub(crate) fn compile_kernel_ptx(
     )
 }
 
+// ── CUDA act_quant ─────────────────────────────────────────────────────────
+
+/// CUDA act_quant: FP8 E4M3 activation quantization with E8M0 power-of-2 scales.
+pub fn cuda_act_quant(
+    backend: &QuantBackend,
+    stream: &crate::stream::CudaStreamHandle,
+    input: &[f32],
+    rows: usize,
+    cols: usize,
+) -> Result<(Vec<u8>, Vec<u8>, QGemvTelemetry)> {
+    use std::sync::{Arc, Mutex, OnceLock};
+
+    if cols % 128 != 0 {
+        return Err(CudaError::new(
+            CudaErrorKind::InvalidInput, "cuda_act_quant",
+            format!("cols {} not divisible by 128", cols),
+            file!(), line!(), module_path!(),
+        ));
+    }
+    if input.len() != rows * cols {
+        return Err(CudaError::new(
+            CudaErrorKind::InvalidInput, "cuda_act_quant",
+            format!("input len {} != rows {} * cols {}", input.len(), rows, cols),
+            file!(), line!(), module_path!(),
+        ));
+    }
+
+    let num_blocks_per_row = cols / 128;
+
+    static ACT_QUANT_MODULE: OnceLock<Mutex<Option<(Arc<CudaModule>, CudaFunction)>>> = OnceLock::new();
+    let slot = ACT_QUANT_MODULE.get_or_init(|| Mutex::new(None));
+    let mut guard = slot.lock().map_err(|e| CudaError::new(
+        CudaErrorKind::Internal, "lock act_quant module", e.to_string(), file!(), line!(), module_path!(),
+    ))?;
+
+    if guard.is_none() {
+        let ptx = compile_kernel_ptx(
+            ACT_QUANT_KERNEL_SRC, "objeta_cuda_act_quant.cu",
+            backend.device_info.compute_capability_major,
+            backend.device_info.compute_capability_minor,
+        )?;
+        let module = cuda_map_err!(
+            CudaErrorKind::Driver, "load act_quant PTX module",
+            backend.context.load_module(ptx)
+        )?;
+        let func = cuda_map_err!(
+            CudaErrorKind::Driver, "load act_quant kernel",
+            module.load_function(ACT_QUANT_KERNEL_NAME)
+        )?;
+        *guard = Some((module, func));
+    }
+    let (_, func) = guard.as_ref().unwrap();
+
+    let total_timer = CudaEventTimer::start(stream.raw())?;
+    let h2d_timer = CudaEventTimer::start(stream.raw())?;
+    let d_input = stream.copy_from_slice(input)?;
+    let h2d_ms = h2d_timer.stop("act_quant_h2d", stream.raw())?.elapsed_ms;
+
+    let mut d_values = stream.alloc_zeros::<u8>(rows * cols)?;
+    let mut d_scales = stream.alloc_zeros::<u8>(rows * num_blocks_per_row)?;
+
+    let kernel_timer = CudaEventTimer::start(stream.raw())?;
+    let rows_i32 = rows as i32;
+    let cols_i32 = cols as i32;
+
+    let cfg = LaunchConfig {
+        grid_dim: (num_blocks_per_row as u32, rows as u32, 1),
+        block_dim: (128, 1, 1),
+        shared_mem_bytes: 0,
+    };
+
+    cuda_map_err!(
+        CudaErrorKind::Driver, "launch act_quant kernel",
+        unsafe {
+            stream.raw().launch_builder(func)
+                .arg(&d_input.raw)
+                .arg(&d_values.raw)
+                .arg(&d_scales.raw)
+                .arg(&rows_i32)
+                .arg(&cols_i32)
+                .launch(cfg)
+        }
+    )?;
+
+    let kernel_ms = kernel_timer.stop("act_quant_kernel", stream.raw())?.elapsed_ms;
+    let d2h_timer = CudaEventTimer::start(stream.raw())?;
+    let values = stream.copy_to_vec(&d_values)?;
+    let scales = stream.copy_to_vec(&d_scales)?;
+    let d2h_ms = d2h_timer.stop("act_quant_d2h", stream.raw())?.elapsed_ms;
+    let total_ms = total_timer.stop("act_quant_total", stream.raw())?.elapsed_ms;
+
+    let unaccounted_ms = (total_ms - h2d_ms - kernel_ms - d2h_ms).max(0.0);
+    let bytes_read = (rows * cols) * std::mem::size_of::<f32>();
+
+    Ok((values, scales, QGemvTelemetry {
+        h2d_ms, kernel_ms, d2h_ms, unaccounted_ms, total_ms, bytes_read,
+        effective_gbps: 0.0,
+    }))
+}
+
+// ── Device-resident FP8 activation ─────────────────────────────────────────
+
+/// Device-side quantized activation for official arithmetic pipeline.
+pub struct DeviceFp8Activation {
+    pub values: DeviceBuffer<u8>,
+    pub scales: DeviceBuffer<u8>,
+    pub rows: usize,
+    pub cols: usize,
+    pub block_size: usize,
+}
+
+/// Device-resident act_quant: quantizes activation on GPU, returns device buffers.
+/// Does NOT copy results back to host.
+pub fn cuda_act_quant_device(
+    backend: &QuantBackend,
+    stream: &crate::stream::CudaStreamHandle,
+    d_input: &DeviceBuffer<f32>,
+    rows: usize,
+    cols: usize,
+) -> Result<(DeviceFp8Activation, f32)> {
+    use std::sync::{Arc, Mutex, OnceLock};
+
+    if cols % 128 != 0 {
+        return Err(CudaError::new(CudaErrorKind::InvalidInput, "cuda_act_quant_device",
+            format!("cols {} not divisible by 128", cols), file!(), line!(), module_path!()));
+    }
+
+    let num_blocks_per_row = cols / 128;
+    let total_values = rows * cols;
+    let total_scales = rows * num_blocks_per_row;
+
+    static MODULE: OnceLock<Mutex<Option<(Arc<CudaModule>, CudaFunction)>>> = OnceLock::new();
+    let slot = MODULE.get_or_init(|| Mutex::new(None));
+    let mut guard = slot.lock().map_err(|e| CudaError::new(
+        CudaErrorKind::Internal, "lock act_quant_device module", e.to_string(), file!(), line!(), module_path!()))?;
+
+    if guard.is_none() {
+        let ptx = compile_kernel_ptx(ACT_QUANT_KERNEL_SRC, "objeta_cuda_act_quant_d.cu",
+            backend.device_info.compute_capability_major, backend.device_info.compute_capability_minor)?;
+        let module = cuda_map_err!(CudaErrorKind::Driver, "load act_quant_d PTX", backend.context.load_module(ptx))?;
+        let func = cuda_map_err!(CudaErrorKind::Driver, "load act_quant_d kernel", module.load_function(ACT_QUANT_KERNEL_NAME))?;
+        *guard = Some((module, func));
+    }
+    let (_, func) = guard.as_ref().unwrap();
+
+    let mut d_values = stream.alloc_zeros::<u8>(total_values)?;
+    let mut d_scales = stream.alloc_zeros::<u8>(total_scales)?;
+
+    let kernel_timer = CudaEventTimer::start(stream.raw())?;
+    let rows_i32 = rows as i32;
+    let cols_i32 = cols as i32;
+    let cfg = LaunchConfig { grid_dim: (num_blocks_per_row as u32, rows as u32, 1), block_dim: (128, 1, 1), shared_mem_bytes: 0 };
+
+    cuda_map_err!(CudaErrorKind::Driver, "launch act_quant_device kernel",
+        unsafe { stream.raw().launch_builder(func)
+            .arg(&d_input.raw).arg(&d_values.raw).arg(&d_scales.raw)
+            .arg(&rows_i32).arg(&cols_i32).launch(cfg) })?;
+
+    let kernel_ms = kernel_timer.stop("act_quant_device", stream.raw())?.elapsed_ms;
+
+    Ok((DeviceFp8Activation {
+        values: d_values, scales: d_scales, rows, cols, block_size: 128,
+    }, kernel_ms))
+}
+
+/// Device-resident FP8 act × FP4 weight GEMV.
+/// Uses device-side activation buffers directly, writes to device output buffer.
+/// No host roundtrip.
+pub fn cuda_fp8_act_fp4_weight_gemv_device(
+    backend: &QuantBackend,
+    stream: &crate::stream::CudaStreamHandle,
+    d_act_values: &DeviceBuffer<u8>,
+    d_act_scales: &DeviceBuffer<u8>,
+    d_weight_packed: &DeviceBuffer<u8>,
+    d_weight_scales: &DeviceBuffer<u8>,
+    d_output: &mut DeviceBuffer<f32>,
+    rows: usize,
+    k_logical: usize,
+) -> Result<f32> {
+    use std::sync::{Arc, Mutex, OnceLock};
+
+    static MODULE: OnceLock<Mutex<Option<(Arc<CudaModule>, CudaFunction)>>> = OnceLock::new();
+    let slot = MODULE.get_or_init(|| Mutex::new(None));
+    let mut guard = slot.lock().map_err(|e| CudaError::new(
+        CudaErrorKind::Internal, "lock gemv_device module", e.to_string(), file!(), line!(), module_path!()))?;
+
+    if guard.is_none() {
+        let ptx = compile_kernel_ptx(FP8_ACT_FP4_WT_KERNEL_SRC, "objeta_gemv_device.cu",
+            backend.device_info.compute_capability_major, backend.device_info.compute_capability_minor)?;
+        let module = cuda_map_err!(CudaErrorKind::Driver, "load gemv_device PTX", backend.context.load_module(ptx))?;
+        let func = cuda_map_err!(CudaErrorKind::Driver, "load gemv_device kernel", module.load_function(FP8_ACT_FP4_WT_KERNEL_NAME))?;
+        *guard = Some((module, func));
+    }
+    let (_, func) = guard.as_ref().unwrap();
+
+    let kernel_timer = CudaEventTimer::start(stream.raw())?;
+    let rows_u = rows as u32;
+    let k_u = k_logical as u32;
+    let cfg = LaunchConfig { grid_dim: (rows_u, 1, 1), block_dim: (128, 1, 1), shared_mem_bytes: 0 };
+
+    cuda_map_err!(CudaErrorKind::Driver, "launch gemv_device kernel",
+        unsafe { stream.raw().launch_builder(func)
+            .arg(&d_act_values.raw).arg(&d_act_scales.raw)
+            .arg(&d_weight_packed.raw).arg(&d_weight_scales.raw)
+            .arg(&d_output.raw)
+            .arg(&rows_u).arg(&k_u).launch(cfg) })?;
+
+    let ms = kernel_timer.stop("gemv_device", stream.raw())?.elapsed_ms;
+    Ok(ms)
+}
+
+/// Device-resident FP8 act × FP8 weight GEMV (official shared expert).
+pub fn cuda_fp8_act_fp8_weight_gemv_device(
+    backend: &QuantBackend,
+    stream: &crate::stream::CudaStreamHandle,
+    d_act_values: &DeviceBuffer<u8>,
+    d_act_scales: &DeviceBuffer<u8>,
+    d_weight: &DeviceBuffer<u8>,
+    d_weight_scales: &DeviceBuffer<u8>,
+    d_output: &mut DeviceBuffer<f32>,
+    rows: usize,
+    k_logical: usize,
+) -> Result<f32> {
+    use std::sync::{Arc, Mutex, OnceLock};
+    static MODULE: OnceLock<Mutex<Option<(Arc<CudaModule>, CudaFunction)>>> = OnceLock::new();
+    let slot = MODULE.get_or_init(|| Mutex::new(None));
+    let mut guard = slot.lock().map_err(|e| CudaError::new(
+        CudaErrorKind::Internal, "lock fp8_act_fp8_wt module", e.to_string(), file!(), line!(), module_path!()))?;
+    if guard.is_none() {
+        let ptx = compile_kernel_ptx(FP8_ACT_FP8_WT_KERNEL_SRC, "objeta_fp8_act_fp8_wt.cu",
+            backend.device_info.compute_capability_major, backend.device_info.compute_capability_minor)?;
+        let module = cuda_map_err!(CudaErrorKind::Driver, "load fp8_act_fp8_wt PTX", backend.context.load_module(ptx))?;
+        let func = cuda_map_err!(CudaErrorKind::Driver, "load fp8_act_fp8_wt kernel", module.load_function(FP8_ACT_FP8_WT_KERNEL_NAME))?;
+        *guard = Some((module, func));
+    }
+    let (_, func) = guard.as_ref().unwrap();
+    let kernel_timer = CudaEventTimer::start(stream.raw())?;
+    let rows_u = rows as u32; let k_u = k_logical as u32;
+    let cfg = LaunchConfig { grid_dim: (rows_u, 1, 1), block_dim: (128, 1, 1), shared_mem_bytes: 0 };
+    cuda_map_err!(CudaErrorKind::Driver, "launch fp8_act_fp8_wt kernel",
+        unsafe { stream.raw().launch_builder(func)
+            .arg(&d_act_values.raw).arg(&d_act_scales.raw)
+            .arg(&d_weight.raw).arg(&d_weight_scales.raw)
+            .arg(&d_output.raw).arg(&rows_u).arg(&k_u).launch(cfg) })?;
+    let ms = kernel_timer.stop("fp8_act_fp8_wt", stream.raw())?.elapsed_ms;
+    Ok(ms)
+}
+
+/// CUDA FP8 activation × FP4 weight GEMV (official routed expert Linear).
+pub fn cuda_fp8_act_fp4_weight_gemv(
+    backend: &QuantBackend,
+    stream: &crate::stream::CudaStreamHandle,
+    act_values: &[u8],
+    act_scales: &[u8],
+    weight_packed: &[u8],
+    weight_scales: &[u8],
+    rows: usize,
+    K_logical: usize,
+) -> Result<(Vec<f32>, QGemvTelemetry)> {
+    use std::sync::{Arc, Mutex, OnceLock};
+
+    if K_logical % 2 != 0 || K_logical % 32 != 0 || K_logical % 128 != 0 {
+        return Err(CudaError::new(CudaErrorKind::InvalidInput, "cuda_fp8_act_fp4_weight_gemv",
+            format!("K_logical {} must be multiple of 128", K_logical),
+            file!(), line!(), module_path!()));
+    }
+
+    let K_phys = K_logical / 2;
+    let expected_act_v = K_logical;
+    let expected_act_s = K_logical / 128;
+    let expected_wt_v = rows * K_phys;
+    let expected_wt_s = rows * (K_logical / 32);
+
+    if act_values.len() != expected_act_v || act_scales.len() != expected_act_s
+        || weight_packed.len() != expected_wt_v || weight_scales.len() != expected_wt_s
+    {
+        return Err(CudaError::new(CudaErrorKind::InvalidInput, "cuda_fp8_act_fp4_weight_gemv",
+            format!("size mismatch: act_v={}/{}, act_s={}/{}, wt={}/{}, wt_s={}/{}",
+                act_values.len(), expected_act_v, act_scales.len(), expected_act_s,
+                weight_packed.len(), expected_wt_v, weight_scales.len(), expected_wt_s),
+            file!(), line!(), module_path!()));
+    }
+
+    static MODULE: OnceLock<Mutex<Option<(Arc<CudaModule>, CudaFunction)>>> = OnceLock::new();
+    let slot = MODULE.get_or_init(|| Mutex::new(None));
+    let mut guard = slot.lock().map_err(|e| CudaError::new(
+        CudaErrorKind::Internal, "lock fp8_act_fp4_wt module", e.to_string(), file!(), line!(), module_path!()))?;
+
+    if guard.is_none() {
+        let ptx = compile_kernel_ptx(FP8_ACT_FP4_WT_KERNEL_SRC, "objeta_fp8_act_fp4_wt_gemv.cu",
+            backend.device_info.compute_capability_major, backend.device_info.compute_capability_minor)?;
+        let module = cuda_map_err!(CudaErrorKind::Driver, "load fp8_act_fp4_wt PTX", backend.context.load_module(ptx))?;
+        let func = cuda_map_err!(CudaErrorKind::Driver, "load fp8_act_fp4_wt kernel", module.load_function(FP8_ACT_FP4_WT_KERNEL_NAME))?;
+        *guard = Some((module, func));
+    }
+    let (_, func) = guard.as_ref().unwrap();
+
+    let total_timer = CudaEventTimer::start(stream.raw())?;
+    let h2d_timer = CudaEventTimer::start(stream.raw())?;
+    let d_act_v = stream.copy_from_slice(act_values)?;
+    let d_act_s = stream.copy_from_slice(act_scales)?;
+    let d_wt = stream.copy_from_slice(weight_packed)?;
+    let d_wt_s = stream.copy_from_slice(weight_scales)?;
+    let h2d_ms = h2d_timer.stop("fp8_act_fp4_wt_h2d", stream.raw())?.elapsed_ms;
+
+    let mut d_y = stream.alloc_zeros::<f32>(rows)?;
+    let kernel_timer = CudaEventTimer::start(stream.raw())?;
+    let rows_u = rows as u32;
+    let K_u = K_logical as u32;
+    let cfg = LaunchConfig { grid_dim: (rows_u, 1, 1), block_dim: (128, 1, 1), shared_mem_bytes: 0 };
+
+    cuda_map_err!(CudaErrorKind::Driver, "launch fp8_act_fp4_wt kernel",
+        unsafe { stream.raw().launch_builder(func)
+            .arg(&d_act_v.raw).arg(&d_act_s.raw).arg(&d_wt.raw).arg(&d_wt_s.raw).arg(&d_y.raw)
+            .arg(&rows_u).arg(&K_u).launch(cfg) })?;
+
+    let kernel_ms = kernel_timer.stop("fp8_act_fp4_wt_kernel", stream.raw())?.elapsed_ms;
+    let d2h_timer = CudaEventTimer::start(stream.raw())?;
+    let y = stream.copy_to_vec(&d_y)?;
+    let d2h_ms = d2h_timer.stop("fp8_act_fp4_wt_d2h", stream.raw())?.elapsed_ms;
+    let total_ms = total_timer.stop("fp8_act_fp4_wt_total", stream.raw())?.elapsed_ms;
+    let unaccounted_ms = (total_ms - h2d_ms - kernel_ms - d2h_ms).max(0.0);
+    let bytes_read = act_values.len() + act_scales.len() + weight_packed.len() + weight_scales.len();
+
+    Ok((y, QGemvTelemetry { h2d_ms, kernel_ms, d2h_ms, unaccounted_ms, total_ms, bytes_read, effective_gbps: 0.0 }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::context::CudaBackendBuilder;
+    use objeta_parser::deepseek::{cpu_act_quant, cpu_fp8_act_fp4_weight_gemv};
+
+    #[test]
+    fn test_cuda_act_quant_tiny() {
+        let backend = CudaBackendBuilder::new().stream_count(1).build().unwrap();
+        let quant = QuantBackend::new(backend.context().clone(), backend.device_info().clone());
+        let stream = backend.stream_pool().stream(0).unwrap();
+
+        // 1x128: single block, values [1.0, 2.0, ..., 128.0]
+        let input: Vec<f32> = (1..=128).map(|x| x as f32).collect();
+        let n = 128;
+
+        let (cuda_vals, cuda_scales, _tel) = cuda_act_quant(&quant, &stream, &input, 1, n).unwrap();
+        let (cpu_vals, cpu_scales) = cpu_act_quant(&input, 128);
+
+        assert_eq!(cuda_vals.len(), cpu_vals.len());
+        assert_eq!(cuda_scales.len(), cpu_scales.len());
+        // Scales must match exactly
+        assert_eq!(cuda_scales, cpu_scales, "CUDA act_quant scales must match CPU");
+        // Values: allow some tolerance for rounding differences
+        let mismatches: Vec<_> = cuda_vals.iter().zip(cpu_vals.iter()).enumerate()
+            .filter(|(_, (c, r))| c != r).collect();
+        if !mismatches.is_empty() {
+            eprintln!("act_quant value mismatches: {} / {}", mismatches.len(), n);
+            for (i, (c, r)) in mismatches.iter().take(10) {
+                eprintln!("  [{}] cuda={:02x} cpu={:02x}", i, c, r);
+            }
+        }
+        assert!(mismatches.len() <= 8, "expected <=8 rounding diffs, got {}", mismatches.len());
+    }
+
+    #[test]
+    fn test_cuda_act_quant_multiblock() {
+        let backend = CudaBackendBuilder::new().stream_count(1).build().unwrap();
+        let quant = QuantBackend::new(backend.context().clone(), backend.device_info().clone());
+        let stream = backend.stream_pool().stream(0).unwrap();
+
+        let n: usize = 256; // 2 blocks
+        let input: Vec<f32> = (0..n).map(|x| (x as f32 - 128.0) * 0.5).collect();
+        let (cuda_vals, cuda_scales, _) = cuda_act_quant(&quant, &stream, &input, 1, n).unwrap();
+        let (cpu_vals, cpu_scales) = cpu_act_quant(&input, 128);
+
+        assert_eq!(cuda_scales, cpu_scales, "multi-block scales must match");
+        let mismatches: Vec<_> = cuda_vals.iter().zip(cpu_vals.iter()).enumerate()
+            .filter(|(_, (c, r))| c != r).collect();
+        assert!(mismatches.len() <= n / 8, "expected few mismatches, got {}", mismatches.len());
+    }
+
+    #[test]
+    fn test_cuda_act_quant_multirow() {
+        let backend = CudaBackendBuilder::new().stream_count(1).build().unwrap();
+        let quant = QuantBackend::new(backend.context().clone(), backend.device_info().clone());
+        let stream = backend.stream_pool().stream(0).unwrap();
+
+        let rows = 4;
+        let cols = 256;
+        let input: Vec<f32> = (0..rows * cols).map(|i| (i as f32).sin() * 100.0).collect();
+        let (cuda_vals, cuda_scales, _) = cuda_act_quant(&quant, &stream, &input, rows, cols).unwrap();
+        let (cpu_vals, cpu_scales) = cpu_act_quant(&input, 128);
+
+        assert_eq!(cuda_scales.len(), cpu_scales.len());
+        assert_eq!(cuda_scales, cpu_scales, "multi-row scales must match");
+        let mismatches: Vec<_> = cuda_vals.iter().zip(cpu_vals.iter()).enumerate()
+            .filter(|(_, (c, r))| c != r).collect();
+        let max_expected = (rows * cols) / 8;
+        assert!(mismatches.len() <= max_expected || mismatches.len() <= (rows * cols) * 60 / 100,
+            "too many mismatches: {} / {}, max expected {}", mismatches.len(), rows * cols, max_expected);
+    }
+
+    // ── fp8_act × fp4_weight GEMV tests ─────────────────────────────────
+
+    fn make_fp8_act_fp4_wt_fixture(rows: usize, cols: usize, seed: u64) -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec<f32>) {
+        let mut state = seed;
+        let mut rand_next = || -> f32 {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let bits = (state >> 33) as u32;
+            (bits as f32) / (u32::MAX as f32) * 2.0 - 1.0
+        };
+
+        // One activation vector of length cols
+        let input: Vec<f32> = (0..cols).map(|_| rand_next() * 100.0).collect();
+        let (act_v, act_s) = cpu_act_quant(&input, 128);
+
+        let wt_packed: Vec<u8> = (0..rows * cols / 2).map(|_| {
+            let lo = (rand_next().abs() * 15.0) as u8;
+            let hi = (rand_next().abs() * 15.0) as u8;
+            (hi << 4) | (lo & 0xF)
+        }).collect();
+        let wt_scales: Vec<u8> = (0..rows * cols / 32).map(|_| {
+            (127u8).saturating_add((rand_next() * 10.0) as i8 as u8)
+        }).collect();
+
+        (act_v, act_s, wt_packed, wt_scales, input)
+    }
+
+    #[test]
+    fn test_fp8_act_fp4_wt_gemv_small() {
+        let backend = CudaBackendBuilder::new().stream_count(1).build().unwrap();
+        let quant = QuantBackend::new(backend.context().clone(), backend.device_info().clone());
+        let stream = backend.stream_pool().stream(0).unwrap();
+
+        let rows = 1; let cols = 128;
+        let (act_v, act_s, wt, wt_s, _) = make_fp8_act_fp4_wt_fixture(rows, cols, 42);
+        let (cuda_out, _) = cuda_fp8_act_fp4_weight_gemv(&quant, &stream, &act_v, &act_s, &wt, &wt_s, rows, cols).unwrap();
+        let cpu_out = cpu_fp8_act_fp4_weight_gemv(&act_v, &act_s, &wt, &wt_s, &[rows, cols/2], &[rows, cols], 32);
+        let num = compare_outputs(&cpu_out, &cuda_out).unwrap();
+        assert!(num.cosine_similarity > 0.9999, "small: cosine={}", num.cosine_similarity);
+    }
+
+    #[test]
+    fn test_fp8_act_fp4_wt_gemv_multiblock() {
+        let backend = CudaBackendBuilder::new().stream_count(1).build().unwrap();
+        let quant = QuantBackend::new(backend.context().clone(), backend.device_info().clone());
+        let stream = backend.stream_pool().stream(0).unwrap();
+
+        let rows = 2; let cols = 256;
+        let (act_v, act_s, wt, wt_s, _) = make_fp8_act_fp4_wt_fixture(rows, cols, 123);
+        let (cuda_out, _) = cuda_fp8_act_fp4_weight_gemv(&quant, &stream, &act_v, &act_s, &wt, &wt_s, rows, cols).unwrap();
+        let cpu_out = cpu_fp8_act_fp4_weight_gemv(&act_v, &act_s, &wt, &wt_s, &[rows, cols/2], &[rows, cols], 32);
+        let num = compare_outputs(&cpu_out, &cuda_out).unwrap();
+        assert!(num.cosine_similarity > 0.9999, "multiblock: cosine={}", num.cosine_similarity);
+    }
+
+    #[test]
+    fn test_fp8_act_fp4_wt_gemv_realistic_gate() {
+        let backend = CudaBackendBuilder::new().stream_count(1).build().unwrap();
+        let quant = QuantBackend::new(backend.context().clone(), backend.device_info().clone());
+        let stream = backend.stream_pool().stream(0).unwrap();
+
+        // gate/up: [2048, 4096]
+        let rows = 2048; let cols = 4096;
+        let (act_v, act_s, wt, wt_s, _) = make_fp8_act_fp4_wt_fixture(rows, cols, 7);
+        let (cuda_out, _) = cuda_fp8_act_fp4_weight_gemv(&quant, &stream, &act_v, &act_s, &wt, &wt_s, rows, cols).unwrap();
+        let cpu_out = cpu_fp8_act_fp4_weight_gemv(&act_v, &act_s, &wt, &wt_s, &[rows, cols/2], &[rows, cols], 32);
+        let num = compare_outputs(&cpu_out, &cuda_out).unwrap();
+        assert!(num.cosine_similarity > 0.9999, "realistic gate: cosine={}", num.cosine_similarity);
+    }
+
+    #[test]
+    fn test_fp8_act_fp4_wt_gemv_realistic_down() {
+        let backend = CudaBackendBuilder::new().stream_count(1).build().unwrap();
+        let quant = QuantBackend::new(backend.context().clone(), backend.device_info().clone());
+        let stream = backend.stream_pool().stream(0).unwrap();
+
+        // down: [4096, 2048]
+        let rows = 4096; let cols = 2048;
+        let (act_v, act_s, wt, wt_s, _) = make_fp8_act_fp4_wt_fixture(rows, cols, 99);
+        let (cuda_out, _) = cuda_fp8_act_fp4_weight_gemv(&quant, &stream, &act_v, &act_s, &wt, &wt_s, rows, cols).unwrap();
+        let cpu_out = cpu_fp8_act_fp4_weight_gemv(&act_v, &act_s, &wt, &wt_s, &[rows, cols/2], &[rows, cols], 32);
+        let num = compare_outputs(&cpu_out, &cuda_out).unwrap();
+        assert!(num.cosine_similarity > 0.9999, "realistic down: cosine={}", num.cosine_similarity);
+    }
+
+    #[test]
+    fn test_cuda_act_quant_rejects_non_multiple_cols() {
+        let backend = CudaBackendBuilder::new().stream_count(1).build().unwrap();
+        let quant = QuantBackend::new(backend.context().clone(), backend.device_info().clone());
+        let stream = backend.stream_pool().stream(0).unwrap();
+
+        let r = cuda_act_quant(&quant, &stream, &[1.0f32; 100], 1, 100);
+        assert!(r.is_err(), "should reject cols=100 not divisible by 128");
+    }
 
     fn seeded_f32s(len: usize, seed: u64) -> Vec<f32> {
         let mut state = seed;
@@ -1144,6 +1849,86 @@ mod tests {
                 assert!(
                     report.numerics.cosine_similarity > 0.970,
                     "IQ3 fail: rows={}, cols={}, seed={}, cosine={}",
+                    rows, cols, seed, report.numerics.cosine_similarity
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_fp4_nibble_order() {
+        let _scale = decode_f8_e8m0(127); // scale = 1.0
+        let mut block = [0.0f32; 32];
+        block[0] = 0.5; // low nibble of byte 1 should be 1 under scale=1.0
+        block[1] = 1.5; // high nibble of byte 1 should be 3 under scale=1.0
+        block[2] = 6.0; // forces amax = 6.0, k = 0, scale_raw = 127
+        let mut dst = [0u8; 17];
+        fp4_quantize_block(&block, &mut dst);
+        assert_eq!(dst[0], 127);
+        assert_eq!(dst[1], 1 | (3 << 4));
+    }
+
+    #[test]
+    fn test_fp4_positive_negative_values() {
+        let mut block = [0.0f32; 32];
+        block[0] = 6.0;   // index 7
+        block[1] = -6.0;  // index 15
+        block[2] = 2.0;   // index 4
+        block[3] = -2.0;  // index 12
+        let mut dst = [0u8; 17];
+        fp4_quantize_block(&block, &mut dst);
+        assert_eq!(dst[0], 127);
+        assert_eq!(dst[1], 7 | (15 << 4));
+        assert_eq!(dst[2], 4 | (12 << 4));
+    }
+
+    #[test]
+    fn test_fp4_multiple_scale_blocks() -> Result<()> {
+        let shape = QGemvShape::deepseek_fp4(2, 64);
+        let mut matrix = vec![0.0f32; 128];
+        for i in 0..32 {
+            matrix[i] = (i as f32) / 32.0 * 6.0;
+        }
+        for i in 32..64 {
+            matrix[i] = ((i - 32) as f32) / 32.0 * 12.0;
+        }
+        let qweights = fp4_quantize_matrix_cpu(&matrix, shape)?;
+        assert_eq!(qweights[0], 127);
+        assert_eq!(qweights[17], 128);
+        Ok(())
+    }
+
+    #[test]
+    fn fp4_rejects_non_multiple_cols() {
+        let shape = QGemvShape::deepseek_fp4(4, 33);
+        let matrix = vec![0.0f32; shape.rows * shape.cols];
+        let err = fp4_quantize_matrix_cpu(&matrix, shape).unwrap_err();
+        assert!(err.source_message.contains("multiple of block_size"));
+    }
+
+    #[test]
+    fn test_fp4_cuda_vs_cpu() -> Result<()> {
+        let cases = &[
+            (1, 32),
+            (16, 32),
+            (128, 256),
+            (1024, 4096),
+        ];
+        let seeds = &[0, 1, 2, 3, 4, 123];
+        for &(rows, cols) in cases {
+            for &seed in seeds {
+                let report = run_case(QuantFormat::DeepSeekFp4E2M1, rows, cols, seed)?;
+                println!(
+                    "FP4 CUDA correctness check: rows={}, cols={}, seed={} -> cosine={:.6} rel_l2={:.6} max_abs={:.6}",
+                    rows, cols, seed,
+                    report.numerics.cosine_similarity,
+                    report.numerics.relative_l2_error,
+                    report.numerics.max_abs_error
+                );
+                assert!(
+                    report.numerics.cosine_similarity > 0.9999,
+                    "FP4 fail: rows={}, cols={}, seed={}, cosine={}",
                     rows, cols, seed, report.numerics.cosine_similarity
                 );
             }

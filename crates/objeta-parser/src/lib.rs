@@ -37,6 +37,7 @@ pub enum Dtype {
     I8,
     U8,
     F8_E8M0,
+    F8_E4M3,
     BOOL,
 }
 
@@ -47,6 +48,7 @@ impl Dtype {
             Dtype::F16 | Dtype::BF16 => 2,
             Dtype::I64 => 8,
             Dtype::I8 | Dtype::U8 | Dtype::F8_E8M0 | Dtype::BOOL => 1,
+            Dtype::F8_E4M3 => 1,
         }
     }
 
@@ -60,6 +62,7 @@ impl Dtype {
             "I8" | "INT8" => Ok(Dtype::I8),
             "U8" | "UINT8" => Ok(Dtype::U8),
             "F8_E8M0" => Ok(Dtype::F8_E8M0),
+            "F8_E4M3" => Ok(Dtype::F8_E4M3),
             "BOOL" => Ok(Dtype::BOOL),
             other => Err(format!("Unknown dtype: {}", other)),
         }

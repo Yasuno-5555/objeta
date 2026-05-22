@@ -14,13 +14,20 @@ pub use context::{
 pub use ffi::{BackendDeviceInfo, BackendInitOptions};
 pub use memory::{DeviceBuffer, PinnedHostBuffer};
 pub use moe::{
-    MoeExecutor, ExpertWeights, ExpertWeightsFp32, MoeTelemetry, selected_moe_cpu,
-    selected_moe_cpu_fp32, ExpertTensorKind, ExpertCacheKey, CudaExpertCache, BytesByTensorKind,
+    MoeExecutor, ExpertWeights, ExpertWeightsFp32, DeepSeekFp4ExpertWeights, MoeTelemetry, selected_moe_cpu,
+    selected_moe_cpu_fp32, selected_moe_cpu_native_fp4,
+    execute_selected_moe_official_routed_fp4_cuda, DeepSeekFp8SharedExpertWeightsDevice,
+    ExpertTensorKind, ExpertCacheKey, CudaExpertCache, ResidencyClass, BytesByTensorKind,
 };
 pub use quant::{
-    compare_outputs, dense_gemv_cpu, gemv_cpu, q4_compare, q4_gemv_cpu, q4_quantize_matrix_cpu, q5_compare,
-    q5_gemv_cpu, q5_quantize_matrix_cpu, iq3_gemv_cpu, iq3_quantize_matrix_cpu, quantize_matrix_cpu,
-    QGemvNumerics, QGemvNumericsSuite, QGemvReport, QGemvShape, QGemvTelemetry, QuantBackend, QuantFormat,
+    compare_outputs, cuda_act_quant, cuda_act_quant_device, cuda_fp8_act_fp4_weight_gemv,
+    cuda_fp8_act_fp4_weight_gemv_device, cuda_fp8_act_fp8_weight_gemv_device,
+    dense_gemv_cpu, gemv_cpu,
+    DeviceFp8Activation, q4_compare, q4_gemv_cpu,
+    q4_quantize_matrix_cpu, q5_compare, q5_gemv_cpu, q5_quantize_matrix_cpu,
+    iq3_gemv_cpu, iq3_quantize_matrix_cpu, fp4_compare, fp4_gemv_cpu,
+    fp4_quantize_matrix_cpu, quantize_matrix_cpu, QGemvNumerics, QGemvNumericsSuite, QGemvReport, QGemvShape,
+    QGemvTelemetry, QuantBackend, QuantFormat,
 };
 pub use stream::{CudaStreamHandle, CudaStreamPool};
 pub use telemetry::{CudaEventTimer, KernelTiming};

@@ -791,6 +791,40 @@ const FP4_E2M1FN_TABLE: [f32; 16] = [
     0.0, -0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0,
 ];
 
+/// Decode an F8_E4M3 value to f32 (IEEE 754 FP8 E4M3).
+///
+/// Format: 1 sign, 4 exponent (bias=7), 3 mantissa.
+/// This is the standard FP8 E4M3 format (same as `torch.float8_e4m3fn`).
+#[inline]
+pub fn f8e4m3_to_f32(raw: u8) -> f32 {
+    let sign = (raw >> 7) as u32;
+    let exp = ((raw >> 3) & 0x0F) as u32;
+    let mant = (raw & 0x07) as u32;
+
+    if exp == 0 {
+        // Subnormal or zero
+        if mant == 0 {
+            f32::from_bits(sign << 31)
+        } else {
+            let m2 = mant;
+            let e2 = 1i32 - 6i32; // bias-1 = 7-1 = 6, subnormal exponent shift
+            (m2 as f32) * 2f32.powi(e2) * if sign == 0 { 1.0 } else { -1.0 }
+        }
+    } else if exp == 15 {
+        // Clamp NaN/Inf sentinel encoding to ±448.0 to match the CUDA kernel
+        // (deepseek_fp8_act_fp8_weight_gemv.cu `decode_f8_e4m3`) and the
+        // encoder's own clamp bound (f32_to_f8e4m3_exact).  Real weight
+        // tensors contain values in [240, 448] encoded as exp=15 with
+        // varying mantissa; treating them as NaN/Inf would pollute the
+        // entire GEMV sum.
+        if sign == 0 { 448.0 } else { -448.0 }
+    } else {
+        // Normal
+        let exp32 = exp + (127 - 7);
+        f32::from_bits((sign << 31) | (exp32 << 23) | (mant << 20))
+    }
+}
+
 /// Decode an F8_E8M0 scale byte to f32: 2^(raw - 127).
 /// Confirmed from DeepSeek V4 Flash inference/kernel.py `fast_pow2`.
 #[inline]
@@ -1312,4 +1346,439 @@ mod tests {
         let tiny = f8e8m0_to_f32(0);
         assert!(tiny > 0.0 && tiny < 1e-38);
     }
+
+    #[test]
+    fn test_f8e4m3_decode() {
+        // Positive normal: value 1.0 → sign=0, exp=7 (0111), mant=0 → raw = 0b0_0111_000 = 0x38
+        assert!((f8e4m3_to_f32(0x38) - 1.0).abs() < 0.01);
+        // Zero
+        assert_eq!(f8e4m3_to_f32(0x00), 0.0);
+    }
+
+    #[test]
+    fn test_fp8_gemv_tile_scaled() {
+        // Use f64 accumulation in test computation for accurate expected values
+        // F8_E4M3: sign=0, exp=7, mant=0 → 1.0 → raw 0x38
+        //           sign=0, exp=8, mant=0 → 2.0 → raw 0x40
+        //           sign=0, exp=8, mant=4 (0b100) → 3.0 → raw 0x44
+        //           sign=0, exp=9, mant=0 → 4.0 → raw 0x48
+        let weight: Vec<u8> = vec![
+            0x38, 0x40,  // Row 0: values 1.0, 2.0
+            0x44, 0x48,  // Row 1: values 3.0, 4.0
+        ];
+        let scale: Vec<u8> = vec![
+            // Scale 2^0 = 1.0 → raw 127 = 0x7F
+            0x7F,
+        ];
+        let x = vec![1.0f32, 1.0f32];
+        let out = fp8_tile_gemv(&weight, &scale, &[2, 2], &x);
+        // Row0: 1.0*1.0 + 2.0*1.0 = 3.0
+        // Row1: 3.0*1.0 + 4.0*1.0 = 7.0
+        assert!((out[0] - 3.0).abs() < 0.02, "out[0]={}, expected 3.0", out[0]);
+        assert!((out[1] - 7.0).abs() < 0.02, "out[1]={}, expected 7.0", out[1]);
+    }
+
+    #[test]
+    fn test_act_quant_fixture() {
+        let x = vec![1.0f32, 448.0, -448.0, 0.0,
+                     100.0, 200.0, -100.0, -200.0,  // block_size=8, 2 blocks
+                     1.0, 2.0, 0.5, -0.5,
+                     0.0, 0.0, 0.0, 0.0];  // 16 elements total
+        let (y, s) = cpu_act_quant(&x, 8);
+        assert_eq!(y.len(), 16);
+        assert_eq!(s.len(), 2);
+        // Block 0: amax=448, scale=2^0=1, raw=127
+        assert_eq!(s[0], 127);
+        // Block 1: amax=2.0, scale=2^ceil(log2(2/448))=2^-7, raw=120
+        assert_eq!(s[1], 120);
+    }
+}
+
+// ── FP8 tile-scaled GEMV reference ─────────────────────────────────────────
+
+/// Decode an F8_E4M3 tile-scaled weight matrix and compute y = W @ x.
+///
+/// `weight_fp8`: raw F8_E4M3 values, shape [rows, cols]
+/// `scale_f8e8m0`: F8_E8M0 scale values, shape [ceil(rows/128), ceil(cols/128)]
+/// `logical_shape`: [rows, cols]
+/// `x`: input f32 vector of length `cols`
+///
+/// Returns output f32 vector of length `rows`.
+pub fn fp8_tile_gemv(
+    weight_fp8: &[u8],
+    scale_f8e8m0: &[u8],
+    logical_shape: &[usize],
+    x: &[f32],
+) -> Vec<f32> {
+    let rows = logical_shape[0];
+    let cols = logical_shape[1];
+    let tile_size = 128;
+    let scale_rows = (rows + tile_size - 1) / tile_size;
+    let scale_cols = (cols + tile_size - 1) / tile_size;
+
+    assert_eq!(weight_fp8.len(), rows * cols, "weight size mismatch");
+    assert_eq!(scale_f8e8m0.len(), scale_rows * scale_cols, "scale size mismatch");
+    assert_eq!(x.len(), cols, "x size mismatch");
+
+    let mut out = vec![0.0f32; rows];
+
+    for row in 0..rows {
+        let scale_row = row / tile_size;
+        let mut sum = 0.0f64;
+        for col in 0..cols {
+            let scale_col = col / tile_size;
+            let weight_val = f8e4m3_to_f32(weight_fp8[row * cols + col]);
+            let scale_val = f8e8m0_to_f32(scale_f8e8m0[scale_row * scale_cols + scale_col]);
+            sum += (weight_val as f64) * (scale_val as f64) * (x[col] as f64);
+        }
+        out[row] = sum as f32;
+    }
+
+    out
+}
+
+// ── Official arithmetic: act_quant + gemm references ──────────────────────
+
+/// Encode f32 → F8_E4M3, returning raw byte. Clamps to [-448, 448].
+#[inline]
+fn f32_to_f8e4m3_exact(v: f32) -> u8 {
+    if v.abs() < 1.0f32 / 128.0 { // below min normal: subnormals
+        let sign = if v < 0.0 { 0x80u8 } else { 0 };
+        let scaled = v.abs() * 16.0; // scale factor for subnormals
+        let quant = (scaled.round() as u8).min(7);
+        return sign | quant;
+    }
+    if v.abs() >= 448.0 {
+        return if v < 0.0 { 0xFE } else { 0x7E };
+    }
+    let sign = if v < 0.0 { 0x80u8 } else { 0 };
+    let bits = v.abs().to_bits();
+    let exp32 = ((bits >> 23) & 0xFF) as i32 - 127;
+    // F8_E4M3: bias=7, max exp=14 (1110), exp range [-7, 7]
+    let mut exp_f8 = exp32 + 7; // exp_f8 can be [-6, 14]
+    if exp_f8 < 0 { exp_f8 = 0; }
+    let mant_bits: u32 = bits & 0x7FFFFF;
+    // Round to nearest 3 mantissa bits
+    let mut mant3 = ((mant_bits + (1 << 19)) >> 20) as u8;
+    let mut exp_final = exp_f8 as u8;
+    if mant3 >= 8 {
+        mant3 = 0;
+        exp_final = exp_final.saturating_add(1);
+    }
+    if exp_final > 14 {
+        exp_final = 14;
+        mant3 = 7;
+    }
+    sign | (exp_final << 3) | (mant3 & 7)
+}
+
+/// Official act_quant: block-wise FP8 E4M3 quantization with F8_E8M0 power-of-2 scales.
+///
+/// For each block of `block_size` elements:
+///   amax = max(|x_i|, 1e-4)
+///   scale = 2^ceil(log2(amax / 448))
+///   y_i = x_i / scale  (clamped to [-448, 448]) → F8_E4M3
+///   s = scale → F8_E8M0 encoding
+///
+/// Returns (quantized_fp8_bytes, scale_f8e8m0_bytes).
+pub fn cpu_act_quant(x: &[f32], block_size: usize) -> (Vec<u8>, Vec<u8>) {
+    assert_eq!(x.len() % block_size, 0, "input length must be multiple of block_size");
+    let n = x.len();
+    let num_blocks = n / block_size;
+    let fp8_max: f32 = 448.0;
+    let fp8_max_inv = 1.0 / fp8_max;
+
+    let mut y = vec![0u8; n];
+    let mut s = vec![0u8; num_blocks];
+
+    for b in 0..num_blocks {
+        let start = b * block_size;
+        let end = start + block_size;
+
+        let mut amax: f32 = 0.0;
+        for i in start..end {
+            let a = x[i].abs();
+            if a > amax { amax = a; }
+        }
+        amax = amax.max(1e-4);
+
+        // fast_round_scale: scale = 2^ceil(log2(amax * fp8_max_inv))
+        let raw = amax * fp8_max_inv;
+        let log2_ceil = if raw > 0.0 {
+            (raw.log2().ceil()) as i32
+        } else {
+            -127  // minimal
+        };
+        let scale: f32 = 2.0f32.powi(log2_ceil);
+
+        // scale as F8_E8M0: value = 2^(e-127), so e = log2(scale) + 127
+        let e = log2_ceil + 127;
+        s[b] = if e < 0 { 0u8 } else if e > 255 { 255u8 } else { e as u8 };
+
+        for i in start..end {
+            let v = (x[i] / scale).clamp(-fp8_max, fp8_max);
+            y[i] = f32_to_f8e4m3_exact(v);
+        }
+    }
+
+    (y, s)
+}
+
+/// Official FP8 act × FP4 weight GEMV with f32 accumulation (matching CUDA precision).
+pub fn cpu_fp8_act_fp4_weight_gemv_f32(
+    act_fp8: &[u8], act_scale: &[u8],
+    weight_i8: &[u8], weight_scale: &[u8],
+    weight_physical_shape: &[usize],
+    weight_logical_shape: &[usize],
+    weight_block_size: usize,
+) -> Vec<f32> {
+    let rows = weight_logical_shape[0];
+    let logical_cols = weight_logical_shape[1];
+    let phys_cols = weight_physical_shape[1];
+    let scale_cols = logical_cols / weight_block_size;
+    let act_block = 128;
+
+    let mut out = vec![0.0f32; rows];
+
+    for row in 0..rows {
+        let mut sum = 0.0f32;
+        for col_group in 0..phys_cols {
+            let byte_val = weight_i8[row * phys_cols + col_group];
+            let low = byte_val & 0x0F;
+            let high = (byte_val >> 4) & 0x0F;
+            let logical_col_lo = col_group * 2;
+            let logical_col_hi = logical_col_lo + 1;
+
+            let fp4_lo = FP4_E2M1FN_TABLE[low as usize];
+            let fp4_hi = FP4_E2M1FN_TABLE[high as usize];
+            let ws_lo = f8e8m0_to_f32(weight_scale[row * scale_cols + logical_col_lo / weight_block_size]);
+            let ws_hi = f8e8m0_to_f32(weight_scale[row * scale_cols + logical_col_hi / weight_block_size]);
+
+            let act_v_lo = f8e4m3_to_f32(act_fp8[logical_col_lo]);
+            let act_v_hi = f8e4m3_to_f32(act_fp8[logical_col_hi]);
+            let act_s_lo = f8e8m0_to_f32(act_scale[logical_col_lo / act_block]);
+            let act_s_hi = f8e8m0_to_f32(act_scale[logical_col_hi / act_block]);
+
+            sum += act_v_lo * act_s_lo * fp4_lo * ws_lo;
+            sum += act_v_hi * act_s_hi * fp4_hi * ws_hi;
+        }
+        out[row] = sum;
+    }
+    out
+}
+
+/// Official FP8 act × FP4 weight GEMV with f64 accumulation (analysis precision).
+/// Matches CUDA within rounding tolerance.
+///
+/// Activation: FP8 E4M3 + F8_E8M0 scales (from act_quant, block_size=128)
+/// Weight: FP4 E2M1FN packed I8 + F8_E8M0 scales (block_size=32)
+pub fn cpu_fp8_act_fp4_weight_gemv(
+    act_fp8: &[u8], act_scale: &[u8],
+    weight_i8: &[u8], weight_scale: &[u8],
+    weight_physical_shape: &[usize],
+    weight_logical_shape: &[usize],
+    weight_block_size: usize,
+) -> Vec<f32> {
+    let rows = weight_logical_shape[0];
+    let logical_cols = weight_logical_shape[1];
+    let phys_cols = weight_physical_shape[1];
+    let fp4_per_byte = 2;
+    let scale_cols = logical_cols / weight_block_size;
+    let act_block = 128;
+
+    let mut out = vec![0.0f32; rows];
+
+    for row in 0..rows {
+        let mut sum = 0.0f64;
+        for col_group in 0..phys_cols {
+            let byte_val = weight_i8[row * phys_cols + col_group];
+            let low = byte_val & 0x0F;
+            let high = (byte_val >> 4) & 0x0F;
+
+            let logical_col_lo = col_group * fp4_per_byte;
+            let logical_col_hi = logical_col_lo + 1;
+
+            // FP4 decode
+            let fp4_lo = FP4_E2M1FN_TABLE[low as usize];
+            let fp4_hi = FP4_E2M1FN_TABLE[high as usize];
+
+            // Weight scale: 1 value per `weight_block_size` logical elements
+            let ws_lo = f8e8m0_to_f32(weight_scale[row * scale_cols + logical_col_lo / weight_block_size]);
+            let ws_hi = f8e8m0_to_f32(weight_scale[row * scale_cols + logical_col_hi / weight_block_size]);
+
+            // Act value (FP8 E4M3 decode) and act scale
+            let act_v_lo = f8e4m3_to_f32(act_fp8[logical_col_lo]);
+            let act_v_hi = f8e4m3_to_f32(act_fp8[logical_col_hi]);
+
+            let act_s_lo = f8e8m0_to_f32(act_scale[logical_col_lo / act_block]);
+            let act_s_hi = f8e8m0_to_f32(act_scale[logical_col_hi / act_block]);
+
+            // fp8_gemm: C = sum(A_fp8 * A_scale * B_fp4 * B_scale)
+            sum += (act_v_lo as f64) * (act_s_lo as f64) * (fp4_lo as f64) * (ws_lo as f64);
+            sum += (act_v_hi as f64) * (act_s_hi as f64) * (fp4_hi as f64) * (ws_hi as f64);
+        }
+        out[row] = sum as f32;
+    }
+
+    out
+}
+
+/// Official FP8 act × FP8 weight GEMV (shared expert path).
+///
+/// Activation: FP8 E4M3 + F8_E8M0 scales (from act_quant, block_size=128)
+/// Weight: FP8 E4M3 + F8_E8M0 scales (tile_size=128)
+pub fn cpu_fp8_act_fp8_weight_gemv(
+    act_fp8: &[u8], act_scale: &[u8],
+    weight_fp8: &[u8], weight_scale: &[u8],
+    logical_shape: &[usize],
+) -> Vec<f32> {
+    let rows = logical_shape[0];
+    let cols = logical_shape[1];
+    let act_block = 128;
+    let wt_tile = 128;
+    let _wt_scale_rows = (rows + wt_tile - 1) / wt_tile;
+    let wt_scale_cols = (cols + wt_tile - 1) / wt_tile;
+
+    let mut out = vec![0.0f32; rows];
+
+    for row in 0..rows {
+        let wt_scale_row = row / wt_tile;
+        let mut sum = 0.0f64;
+        for col in 0..cols {
+            let act_v = f8e4m3_to_f32(act_fp8[col]);
+            let act_s = f8e8m0_to_f32(act_scale[col / act_block]);
+
+            let wt_v = f8e4m3_to_f32(weight_fp8[row * cols + col]);
+            let wt_scale_col = col / wt_tile;
+            let wt_s = f8e8m0_to_f32(weight_scale[wt_scale_row * wt_scale_cols + wt_scale_col]);
+
+            sum += (act_v as f64) * (act_s as f64) * (wt_v as f64) * (wt_s as f64);
+        }
+        out[row] = sum as f32;
+    }
+
+    out
+}
+
+/// Official-arithmetic shared expert (act_quant + fp8×fp8 gemm + SwiGLU).
+pub fn cpu_shared_expert_fp8_official(
+    w1: &[u8], w1_scale: &[u8],
+    w3: &[u8], w3_scale: &[u8],
+    w2: &[u8], w2_scale: &[u8],
+    hidden: &[f32],
+    dim: usize,
+    inter_dim: usize,
+    swiglu_limit: f32,
+) -> Vec<f32> {
+    // act_quant(hidden) for gate projection
+    let (act_fp8, act_s) = cpu_act_quant(hidden, 128);
+    let gate_out = cpu_fp8_act_fp8_weight_gemv(&act_fp8, &act_s, w1, w1_scale, &[inter_dim, dim]);
+
+    // act_quant(hidden) for up projection
+    let up_out = cpu_fp8_act_fp8_weight_gemv(&act_fp8, &act_s, w3, w3_scale, &[inter_dim, dim]);
+
+    // SwiGLU
+    let mut act = vec![0.0f32; inter_dim];
+    for i in 0..inter_dim {
+        let g = gate_out[i];
+        let u = up_out[i].clamp(-swiglu_limit, swiglu_limit);
+        act[i] = g / (1.0 + (-g).exp()) * u;
+    }
+
+    // act_quant(act) for down projection
+    let (act2_fp8, act2_s) = cpu_act_quant(&act, 128);
+    cpu_fp8_act_fp8_weight_gemv(&act2_fp8, &act2_s, w2, w2_scale, &[dim, inter_dim])
+}
+
+/// Official-arithmetic routed expert with f32 accumulation (matching CUDA).
+pub fn cpu_routed_expert_fp4_official_f32(
+    gate_i8: &[u8], gate_scale: &[u8],
+    up_i8: &[u8], up_scale: &[u8],
+    down_i8: &[u8], down_scale: &[u8],
+    gate_phys: &[usize], gate_logical: &[usize],
+    up_phys: &[usize], up_logical: &[usize],
+    down_phys: &[usize], down_logical: &[usize],
+    weight_block_size: usize,
+    hidden: &[f32], dim: usize, inter_dim: usize, swiglu_limit: f32,
+) -> Vec<f32> {
+    let (act_fp8, act_s) = cpu_act_quant(hidden, 128);
+    let gate_out = cpu_fp8_act_fp4_weight_gemv_f32(&act_fp8, &act_s, gate_i8, gate_scale, gate_phys, gate_logical, weight_block_size);
+    let up_out = cpu_fp8_act_fp4_weight_gemv_f32(&act_fp8, &act_s, up_i8, up_scale, up_phys, up_logical, weight_block_size);
+    let mut act = vec![0.0f32; inter_dim];
+    for i in 0..inter_dim {
+        let g = gate_out[i];
+        let u = up_out[i].clamp(-swiglu_limit, swiglu_limit);
+        act[i] = g / (1.0 + (-g).exp()) * u;
+    }
+    let (act2_fp8, act2_s) = cpu_act_quant(&act, 128);
+    cpu_fp8_act_fp4_weight_gemv_f32(&act2_fp8, &act2_s, down_i8, down_scale, down_phys, down_logical, weight_block_size)
+}
+
+/// Official-arithmetic routed expert (act_quant + fp8×fp4 gemm + SwiGLU) with f64 accumulation.
+pub fn cpu_routed_expert_fp4_official(
+    gate_i8: &[u8], gate_scale: &[u8],
+    up_i8: &[u8], up_scale: &[u8],
+    down_i8: &[u8], down_scale: &[u8],
+    gate_phys: &[usize], gate_logical: &[usize],
+    up_phys: &[usize], up_logical: &[usize],
+    down_phys: &[usize], down_logical: &[usize],
+    weight_block_size: usize,
+    hidden: &[f32],
+    _dim: usize,
+    inter_dim: usize,
+    swiglu_limit: f32,
+) -> Vec<f32> {
+    // act_quant(hidden) for gate + up projections
+    let (act_fp8, act_s) = cpu_act_quant(hidden, 128);
+
+    let gate_out = cpu_fp8_act_fp4_weight_gemv(
+        &act_fp8, &act_s, gate_i8, gate_scale, gate_phys, gate_logical, weight_block_size,
+    );
+    let up_out = cpu_fp8_act_fp4_weight_gemv(
+        &act_fp8, &act_s, up_i8, up_scale, up_phys, up_logical, weight_block_size,
+    );
+
+    let mut act = vec![0.0f32; inter_dim];
+    for i in 0..inter_dim {
+        let g = gate_out[i];
+        let u = up_out[i].clamp(-swiglu_limit, swiglu_limit);
+        act[i] = g / (1.0 + (-g).exp()) * u;
+    }
+
+    // act_quant(act) for down projection
+    let (act2_fp8, act2_s) = cpu_act_quant(&act, 128);
+    cpu_fp8_act_fp4_weight_gemv(
+        &act2_fp8, &act2_s, down_i8, down_scale, down_phys, down_logical, weight_block_size,
+    )
+}
+
+/// DECODED-WEIGHT reference (NOT official arithmetic — skips act_quant).
+/// CPU reference for shared expert (F8_E4M3 decoded-weight GEMV).
+/// Retained for diagnostic comparison only.
+pub fn cpu_shared_expert_fp8(
+    w1: &[u8], w1_scale: &[u8],  // gate: [inter_dim, dim]
+    w3: &[u8], w3_scale: &[u8],  // up:   [inter_dim, dim]
+    w2: &[u8], w2_scale: &[u8],  // down: [dim, inter_dim]
+    hidden: &[f32],
+    dim: usize,
+    inter_dim: usize,
+    swiglu_limit: f32,
+) -> Vec<f32> {
+    // gate_out = w1 @ hidden → [inter_dim]
+    let gate_out = fp8_tile_gemv(w1, w1_scale, &[inter_dim, dim], hidden);
+    // up_out = w3 @ hidden → [inter_dim]
+    let up_out = fp8_tile_gemv(w3, w3_scale, &[inter_dim, dim], hidden);
+
+    // act = silu(gate_out) * clamp(up_out, -limit, limit) → [inter_dim]
+    let mut act = vec![0.0f32; inter_dim];
+    for i in 0..inter_dim {
+        let g = gate_out[i];
+        let u = up_out[i].clamp(-swiglu_limit, swiglu_limit);
+        // silu(x) = x * sigmoid(x) = x / (1 + e^(-x))
+        let silu_g = g / (1.0 + (-g).exp());
+        act[i] = silu_g * u;
+    }
+
+    // down_out = w2 @ act → [dim]
+    fp8_tile_gemv(w2, w2_scale, &[dim, inter_dim], &act)
 }

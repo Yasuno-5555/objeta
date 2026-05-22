@@ -1,0 +1,53 @@
+    // ── Shared expert (optional FP8) — try cache before shared_dev ──
+    let mut shared_ms = 0.0f32;
+
+    // Build shared expert cache keys
+    let shared_key = |tid: ExpertTensorKind| ExpertCacheKey {
+        layer_id, expert_id: 0,
+        tensor_kind: tid,
+        quant_format: QuantFormat::DeepSeekFp4E2M1,
+    };
+
+    // Resolve shared expert device buffers:
+    // 1. Try pinned cache first (SharedGateWeight etc.)
+    // 2. Fall back to shared_dev parameter
+    let shared_bufs: Option<(
+        Arc<DeviceBuffer<u8>>, // gate_weight
+        Arc<DeviceBuffer<u8>>, // gate_scale
+        Arc<DeviceBuffer<u8>>, // up_weight
+        Arc<DeviceBuffer<u8>>, // up_scale
+        Arc<DeviceBuffer<u8>>, // down_weight
+        Arc<DeviceBuffer<u8>>, // down_scale
+    )> = {
+        // Check cache first
+        let cached: Option<(
+            Arc<DeviceBuffer<u8>>, Arc<DeviceBuffer<u8>>,
+            Arc<DeviceBuffer<u8>>, Arc<DeviceBuffer<u8>>,
+            Arc<DeviceBuffer<u8>>, Arc<DeviceBuffer<u8>>,
+        )> = cache.as_mut().map(|c| {
+            let gw = c.get(&shared_key(ExpertTensorKind::SharedGateWeight))?;
+            let gs = c.get(&shared_key(ExpertTensorKind::SharedGateScale))?;
+            let uw = c.get(&shared_key(ExpertTensorKind::SharedUpWeight))?;
+            let us = c.get(&shared_key(ExpertTensorKind::SharedUpScale))?;
+            let dw = c.get(&shared_key(ExpertTensorKind::SharedDownWeight))?;
+            let ds = c.get(&shared_key(ExpertTensorKind::SharedDownScale))?;
+            Some((gw, gs, uw, us, dw, ds))
+        }).flatten();
+
+        if cached.is_some() {
+            cached
+        } else if let Some(shared) = shared_expert {
+            // Upload fresh
+            let gw = Arc::new(stream.copy_from_slice(&shared.gate_weight).ok()?);
+            let gs = Arc::new(stream.copy_from_slice(&shared.gate_scale).ok()?);
+            let uw = Arc::new(stream.copy_from_slice(&shared.up_weight).ok()?);
+            let us = Arc::new(stream.copy_from_slice(&shared.up_scale).ok()?);
+            let dw = Arc::new(stream.copy_from_slice(&shared.down_weight).ok()?);
+            let ds = Arc::new(stream.copy_from_slice(&shared.down_scale).ok()?);
+            Some((gw, gs, uw, us, dw, ds))
+        } else {
+            None
+        }
+    };
+
+    if let Some((ref s_gw, ref s_gs, ref s_uw, ref s_us, ref s_dw, ref s_ds)) = shared_bufs {

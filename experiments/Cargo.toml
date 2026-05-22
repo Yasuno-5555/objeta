@@ -11,6 +11,10 @@ path = "src/verify_rotation.rs"
 name = "verify_all_layers"
 path = "src/verify_all_layers.rs"
 
+[[bin]]
+name = "diagnose_shared_fp8"
+path = "src/diagnose_shared_fp8.rs"
+
 [dependencies]
 objeta-core.workspace = true
 objeta-parser.workspace = true

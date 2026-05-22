@@ -1,0 +1,233 @@
+warning: variant `F8_E8M0` should have an upper camel case name
+  --> crates\objeta-parser\src\lib.rs:39:5
+   |
+39 |     F8_E8M0,
+   |     ^^^^^^^ help: convert the identifier to upper camel case: `F8E8m0`
+   |
+   = note: `#[warn(non_camel_case_types)]` (part of `#[warn(nonstandard_style)]`) on by default
+
+warning: variant `F8_E4M3` should have an upper camel case name
+  --> crates\objeta-parser\src\lib.rs:40:5
+   |
+40 |     F8_E4M3,
+   |     ^^^^^^^ help: convert the identifier to upper camel case: `F8E4m3`
+
+warning: unused variable: `dim`
+    --> crates\objeta-parser\src\deepseek.rs:1701:21
+     |
+1701 |     hidden: &[f32], dim: usize, inter_dim: usize, swiglu_limit: f32,
+     |                     ^^^ help: if this is intentional, prefix it with an underscore: `_dim`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `base_dir` is never read
+   --> crates\objeta-parser\src\lib.rs:103:5
+    |
+ 97 | pub struct ModelWeights {
+    |            ------------ field in this struct
+...
+103 |     base_dir: PathBuf,
+    |     ^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `objeta-parser` (lib) generated 4 warnings (run `cargo fix --lib -p objeta-parser` to apply 1 suggestion)
+warning: variable does not need to be mutable
+    --> crates\objeta-cuda\src\moe.rs:1371:9
+     |
+1371 |     let mut d_act_inter = stream.alloc_zeros::<f32>(intermediate_size)?;
+     |         ----^^^^^^^^^^^
+     |         |
+     |         help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+    --> crates\objeta-cuda\src\moe.rs:1373:9
+     |
+1373 |     let mut d_out = stream.alloc_zeros::<f32>(out_dim)?;
+     |         ----^^^^^
+     |         |
+     |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> crates\objeta-cuda\src\moe.rs:1381:9
+     |
+1381 |     let mut weight_bytes_loaded = 0usize;
+     |         ----^^^^^^^^^^^^^^^^^^^
+     |         |
+     |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> crates\objeta-cuda\src\moe.rs:1382:9
+     |
+1382 |     let mut weight_bytes_reused = 0usize;
+     |         ----^^^^^^^^^^^^^^^^^^^
+     |         |
+     |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> crates\objeta-cuda\src\moe.rs:1383:9
+     |
+1383 |     let mut scale_bytes_loaded = 0usize;
+     |         ----^^^^^^^^^^^^^^^^^^
+     |         |
+     |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> crates\objeta-cuda\src\moe.rs:1384:9
+     |
+1384 |     let mut scale_bytes_reused = 0usize;
+     |         ----^^^^^^^^^^^^^^^^^^
+     |         |
+     |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> crates\objeta-cuda\src\moe.rs:1492:13
+     |
+1492 |         let mut d_shared_act = stream.alloc_zeros::<f32>(intermediate_size)?;
+     |             ----^^^^^^^^^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: unused variable: `input_act_quant_ms`
+    --> crates\objeta-cuda\src\moe.rs:1365:17
+     |
+1365 |     let (d_act, input_act_quant_ms) =
+     |                 ^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_input_act_quant_ms`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable `inter_act_quant_ms` is assigned to, but never used
+    --> crates\objeta-cuda\src\moe.rs:1377:9
+     |
+1377 |     let mut inter_act_quant_ms = 0.0f32;
+     |         ^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: consider using `_inter_act_quant_ms` instead
+
+warning: value assigned to `inter_act_quant_ms` is never read
+    --> crates\objeta-cuda\src\moe.rs:1464:9
+     |
+1464 |         inter_act_quant_ms += aq_ms;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+     = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+    --> crates\objeta-cuda\src\quant.rs:1174:9
+     |
+1174 |     let mut d_values = stream.alloc_zeros::<u8>(rows * cols)?;
+     |         ----^^^^^^^^
+     |         |
+     |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> crates\objeta-cuda\src\quant.rs:1175:9
+     |
+1175 |     let mut d_scales = stream.alloc_zeros::<u8>(rows * num_blocks_per_row)?;
+     |         ----^^^^^^^^
+     |         |
+     |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> crates\objeta-cuda\src\quant.rs:1261:9
+     |
+1261 |     let mut d_values = stream.alloc_zeros::<u8>(total_values)?;
+     |         ----^^^^^^^^
+     |         |
+     |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> crates\objeta-cuda\src\quant.rs:1262:9
+     |
+1262 |     let mut d_scales = stream.alloc_zeros::<u8>(total_scales)?;
+     |         ----^^^^^^^^
+     |         |
+     |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> crates\objeta-cuda\src\quant.rs:1421:9
+     |
+1421 |     let mut d_y = stream.alloc_zeros::<f32>(rows)?;
+     |         ----^^^
+     |         |
+     |         help: remove this `mut`
+
+warning: variable `K_logical` should have a snake case name
+    --> crates\objeta-cuda\src\quant.rs:1373:5
+     |
+1373 |     K_logical: usize,
+     |     ^^^^^^^^^ help: convert the identifier to snake case (notice the capitalization): `k_logical`
+     |
+     = note: `#[warn(non_snake_case)]` (part of `#[warn(nonstandard_style)]`) on by default
+
+warning: variable `K_phys` should have a snake case name
+    --> crates\objeta-cuda\src\quant.rs:1383:9
+     |
+1383 |     let K_phys = K_logical / 2;
+     |         ^^^^^^ help: convert the identifier to snake case (notice the capitalization): `k_phys`
+
+warning: variable `K_u` should have a snake case name
+    --> crates\objeta-cuda\src\quant.rs:1424:9
+     |
+1424 |     let K_u = K_logical as u32;
+     |         ^^^ help: convert the identifier to snake case (notice the capitalization): `k_u`
+
+warning: `objeta-cuda` (lib) generated 18 warnings (run `cargo fix --lib -p objeta-cuda` to apply 13 suggestions)
+   Compiling objeta-cuda v0.1.0 (E:\Projects\objeta\crates\objeta-cuda)
+warning: unused imports: `cpu_act_quant`, `cpu_fp8_act_fp4_weight_gemv_f32`, `cpu_fp8_act_fp4_weight_gemv`, `cpu_fp8_act_fp8_weight_gemv`, `cpu_routed_expert_fp4_official`, and `fp8_tile_gemv`
+  --> crates\objeta-cuda\src\bin\deepseek_single_layer_moe.rs:20:5
+   |
+20 |     cpu_act_quant, cpu_fp8_act_fp4_weight_gemv, cpu_fp8_act_fp4_weight_gemv_f32,
+   |     ^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+21 |     cpu_fp8_act_fp8_weight_gemv,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+22 |     cpu_routed_expert_fp4_official, cpu_routed_expert_fp4_official_f32,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+23 |     cpu_shared_expert_fp8, cpu_shared_expert_fp8_official,
+24 |     decode_deepseek_fp4_to_f32, fp8_tile_gemv,
+   |                                 ^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `SOURCE_LABEL` is never used
+  --> crates\objeta-cuda\src\bin\deepseek_single_layer_moe.rs:37:7
+   |
+37 | const SOURCE_LABEL: &str = "real_deepseek_v4_flash_single_layer_moe";
+   |       ^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: variant `Sigmoid` is never constructed
+   --> crates\objeta-cuda\src\bin\deepseek_single_layer_moe.rs:739:5
+    |
+737 | enum ScoreFunc {
+    |      --------- variant in this enum
+738 |     Softmax,
+739 |     Sigmoid,
+    |     ^^^^^^^
+    |
+    = note: `ScoreFunc` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: fields `dim` and `inter_dim` are never read
+    --> crates\objeta-cuda\src\bin\deepseek_single_layer_moe.rs:1017:5
+     |
+1010 | struct DeepSeekFp8SharedExpertWeights {
+     |        ------------------------------ fields in this struct
+...
+1017 |     dim: usize,
+     |     ^^^
+1018 |     inter_dim: usize,
+     |     ^^^^^^^^^
+     |
+     = note: `DeepSeekFp8SharedExpertWeights` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: `objeta-cuda` (bin "deepseek_single_layer_moe") generated 4 warnings (run `cargo fix --bin "deepseek_single_layer_moe" -p objeta-cuda` to apply 1 suggestion)
+    Finished `release` profile [optimized] target(s) in 3.32s
+     Running `target\release\deepseek_single_layer_moe.exe --parse-dir artifacts/deepseek_flash_parse --model-dir E:\Projects\DeepSeek-V4-Flash --layer 27 --mode official-routed --selection-mode manual --expert-ids 161,174,164,141,111,124 --include-shared --cache-bytes 1073741824 --warmup 1 --repeat 1`
+DEBUG_PARITY full: cos=1 rel_l2=0 max_abs=inf
+DEBUG_PARITY shared: cos=1 rel_l2=0 max_abs=inf
+DEBUG_NORM: routed=14.006861981338833 shared=NaN full=NaN include_shared=true
+DEBUG_RESIDUAL: l2=0.0000005190573702157223 first10=[-7.450581e-9, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -3.7252903e-9]

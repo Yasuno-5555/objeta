@@ -188,8 +188,9 @@ fn main() -> Result<()> {
         "q4" | "q4_0" => QuantFormat::Q4_0,
         "q5" | "q5_0" => QuantFormat::Q5_0,
         "iq3" | "iq3_0" => QuantFormat::IQ3_0,
+        "fp4" | "fp4_e2m1" | "deepseek_fp4" | "deepseek_fp4_e2m1" => QuantFormat::DeepSeekFp4E2M1,
         other => {
-            eprintln!("unsupported --format {other}; expected q4, q5, or iq3");
+            eprintln!("unsupported --format {other}; expected q4, q5, iq3, or fp4");
             std::process::exit(2);
         }
     };
@@ -220,7 +221,12 @@ fn main() -> Result<()> {
     quant.compile_format(format)?;
 
     if is_matrix {
-        let formats = &[QuantFormat::Q4_0, QuantFormat::Q5_0, QuantFormat::IQ3_0];
+        let formats = &[
+            QuantFormat::Q4_0,
+            QuantFormat::Q5_0,
+            QuantFormat::IQ3_0,
+            QuantFormat::DeepSeekFp4E2M1,
+        ];
         let matrix_shapes = &[
             (4096, 4096),
             (11008, 4096),

@@ -1,4 +1,4 @@
-# objeta Handoff — 2026-05-21
+# objeta Handoff — 2026-05-22
 
 ## Current Truth
 
@@ -18,6 +18,10 @@
   - importance-aware eviction
   - runtime profile loading
   - governor disabled / observe-only / safety-only / offensive-v0 modes
+- `objeta-cuda` now supports:
+  - GPU-native DeepSeek FP4 GEMV execution.
+  - GPU-native DeepSeek FP4 selected-expert MoE execution bypassing CPU decode/transcoding.
+  - VRAM `CudaExpertCache` tracking of both packed weights and scale tensors.
 
 ## Most Important Recent Changes
 
@@ -89,6 +93,17 @@ So:
 
 - `iq3` is now a **real RTX candidate**
 - not a Metal / M1 recommendation
+
+### 5. Native DeepSeek FP4 MoE and GEMV Execution Support
+
+We added full GPU-native support for the official DeepSeek FP4 format (`QuantFormat::DeepSeekFp4E2M1`), allowing direct execution of official weight/scale tensors on the GPU without intermediate CPU decoding or Q4 transcoding.
+
+Key components:
+- **CUDA NVRTC Kernel (`fp4_e2m1_gemv_split`)**: Decodes FP4 E2M1FN packed weights and F8_E8M0 scales on-the-fly and accumulates dot products in `f32`.
+- **Selected-Expert MoE Executor**: Combines the GEMV, activation (`silu_mul`), and accumulation (`weighted_accum`) kernels to execute selected experts natively on GPU. Bypasses the CPU transcode path entirely in `--execution-format native-fp4` mode.
+- **Persistent GPU cache (`CudaExpertCache`)**: Caches both packed weight tensors and scale tensors across invocations, respecting capacity limits and maintaining the byte invariant equation.
+- **Layer Namespace CLI**: Supported `--block-family decoder` and `--block-family mtp` to route to correct namespace prefixes.
+- **Test suite**: Synthetic correctness sweeps compare CUDA vs CPU native FP4 reference with cosine similarity > 0.9999.
 
 ## Real Calibration Coverage Status
 

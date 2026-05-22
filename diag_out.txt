@@ -1,0 +1,8 @@
+act_fp8 exp=15 count: 0 / 4096
+w1[4133] raw=0xF9 exp=15
+w1[4161] raw=0x78 exp=15
+w1[4208] raw=0x78 exp=15
+w1[4389] raw=0x78 exp=15
+w1[4520] raw=0x7A exp=15
+w1 exp=15 count: 22236 / 8388608
+Row 1 total sum = 0.2962385043501854

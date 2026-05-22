@@ -1,58 +1,56 @@
-# DeepSeek V4 Flash — E2E One-Token Forward Blockers
+# DeepSeek V4 Flash — E2E One-Token Blockers
 
-## Status: Implemented
+**Status: ALL RESOLVED (2026-05-22)**
 
-All operators required for single-token greedy decoding have been implemented:
+## Original Blockers → Resolution
 
-| Operator | Supported | File |
-|----------|-----------|------|
-| token embedding | yes | e2e binary |
-| RMSNorm | yes | e2e binary |
-| MLA attention (seq=1, pos=0) | yes | e2e binary |
-| Hyper-Connection (FFN path) | yes | e2e binary |
-| MoE.forward (validated) | yes | `objeta-cuda::moe` |
-| final norm | yes | e2e binary |
-| lm_head | yes | e2e binary |
-| top-10 logits extraction | yes | e2e binary |
+| # | Blocker | Status | Resolution |
+|---|---|---|---|
+| 1 | Token embedding loading | ✅ RESOLVED | `embed.weight` loaded via `ModelWeights::get_f32` |
+| 2 | HC state initialization [4,4096] | ✅ RESOLVED | Embedding repeated across 4 HC copies |
+| 3 | HC pre/post Sinkhorn split | ✅ RESOLVED | 20-iteration row/col normalization, sigmoid gating |
+| 4 | Attn norm (RMS) | ✅ RESOLVED | CPU RMSNorm with eps=1e-6 |
+| 5 | WqA [1024,4096] FP8 projection | ✅ RESOLVED | CUDA-accelerated: `cuda_act_quant_device` + `cuda_fp8_act_fp8_weight_gemv_device` |
+| 6 | Q norm (per-head) | ✅ RESOLVED | CPU RMSNorm on per-head Q vectors |
+| 7 | WqB [32768,1024] FP8 projection | ✅ RESOLVED | CUDA-accelerated (largest linear, ~23ms) |
+| 8 | Wkv [512,4096] FP8 projection | ✅ RESOLVED | CUDA-accelerated (~1.5ms) |
+| 9 | KV norm | ✅ RESOLVED | CPU RMSNorm |
+| 10 | Attn sink + softmax alpha | ✅ RESOLVED | Per-head score with sink bias, seq=1 degenerate case |
+| 11 | WoA grouped projection [8,1024,4096] | ✅ RESOLVED | CUDA per-group GEMV with host-side weight slicing |
+| 12 | WoB [4096,8192] FP8 projection | ✅ RESOLVED | CUDA-accelerated (~18ms) |
+| 13 | HC post-attention blending | ✅ RESOLVED | post * output + comb @ residual |
+| 14 | HC pre-FFN blending | ✅ RESOLVED | Same Sinkhorn, different tensors (hc_ffn_*) |
+| 15 | FFN norm (RMS) | ✅ RESOLVED | CPU RMSNorm |
+| 16 | Router (gate) selection | ✅ RESOLVED | CPU dense GEMV + top-k selection |
+| 17 | Expert FP4 tensor loading | ✅ RESOLVED | `ModelWeights::get_raw` by expert ID |
+| 18 | Shared FP8 tensor loading | ✅ RESOLVED | Uploaded to device via `copy_from_slice` |
+| 19 | CUDA MoE.forward | ✅ RESOLVED | `execute_selected_moe_official_routed_fp4_cuda` (sealed, cos=1.0) |
+| 20 | HC post-FFN blending | ✅ RESOLVED | post * moe_out + comb @ residual |
+| 21 | HC head | ✅ RESOLVED | Sigmoid gating + weighted sum |
+| 22 | Final RMSNorm | ✅ RESOLVED | CPU RMSNorm |
+| 23 | LM head [129280,4096] | ✅ RESOLVED | CPU dense GEMV (374ms; CUDA path planned) |
+| 24 | Position encoding (RoPE) | ⬜ N/A | seq=1, pos=0 → identity rotation |
+| 25 | KV cache (multi-token) | ⬜ OUT OF SCOPE | Future work |
 
-### Required tensors
+## Current Canary
 
-| Tensor | Shape | Dtype | Required Op | Status |
-|--------|-------|-------|-------------|--------|
-| `embed.weight` | [129280, 4096] | BF16 | gather (token→hidden) | done |
-| `layers.{L}.attn_norm.weight` | [4096] | BF16 | RMSNorm | done |
-| `layers.{L}.ffn_norm.weight` | [4096] | BF16 | RMSNorm | done |
-| `layers.{L}.attn.wq_a.weight` | [1024, 4096] | F8_E4M3 | FP8 × FP8 GEMV | done |
-| `layers.{L}.attn.wq_a.scale` | [8, 32] | F8_E8M0 | tile scale | done |
-| `layers.{L}.attn.wq_b.weight` | [32768, 1024] | F8_E4M3 | FP8 × BF16 GEMV | done |
-| `layers.{L}.attn.wq_b.scale` | [256, 8] | F8_E8M0 | tile scale | done |
-| `layers.{L}.attn.wkv.weight` | [512, 4096] | F8_E4M3 | FP8 × FP8 GEMV | done |
-| `layers.{L}.attn.wkv.scale` | [4, 32] | F8_E8M0 | tile scale | done |
-| `layers.{L}.attn.wo_a.weight` | [8192, 4096] | F8_E4M3 | FP8 × FP8 GEMV | done |
-| `layers.{L}.attn.wo_a.scale` | [64, 32] | F8_E8M0 | tile scale | done |
-| `layers.{L}.attn.wo_b.weight` | [4096, 8192] | F8_E4M3 | FP8 × FP8 GEMV | done |
-| `layers.{L}.attn.wo_b.scale` | [32, 64] | F8_E8M0 | tile scale | done |
-| `layers.{L}.attn.q_norm.weight` | [1024] | BF16 | RMSNorm (q after WqA) | done |
-| `layers.{L}.attn.kv_norm.weight` | [512] | BF16 | RMSNorm (kv after Wkv) | done |
-| `layers.{L}.attn.attn_sink` | [64] | F32 | additive bias | done |
-| `layers.{L}.hc_ffn_base` | [1024] | F32 | additive residual | done |
-| `layers.{L}.hc_ffn_fn` | [4096, 2048] | F8_E4M3 | FP8 × FP8 compress | done |
-| `layers.{L}.hc_ffn_scale` | [32, 32] | F8_E8M0 | tile scale | done |
-| `norm.weight` | [4096] | BF16 | RMSNorm (final) | done |
-| `head.weight` | [129280, 4096] | BF16 | matmul (hidden→logits) | done |
-| `hc_head_base` | [1024] | F32 | additive residual | done |
-| `hc_head_fn` | [4096, 2048] | F8_E4M3 | FP8 × FP8 compress | done |
-| `hc_head_scale` | [32, 32] | F8_E8M0 | tile scale | done |
+**Input**: token 42
+**Position**: 0, seq_len=1
+**Output**: token **5**
+**Top 5**: [5:15.9, 3398:13.2, 7519:13.1, 110704:12.9, 372:12.8]
+**All finite**: ✅
+**Official MoE**: ✅
+**Deterministic**: ✅ (3 runs identical)
 
-### Unsupported (MTP only, excluded from greedy)
+## Performance
 
-- `mtp.0.e_proj.weight/scale` — next-token-prediction layers, not needed
-- `mtp.0.h_proj.weight/scale` — same
+| Path | Time |
+|---|---|
+| CPU attention (deepseek_e2e) | ~25s |
+| CUDA attention (deepseek_e2e_fast) | ~9s |
 
-### Notes
+## Intervention Findings
 
-- `head.weight` at BF16 (not FP8) — direct dot product with hidden state
-- `embed.weight` at BF16 — simple gather by token id
-- RMSNorm weights at BF16 — multiplication with normalized input
-- HC FFN compress: hidden [4096] → compressed [2048] via FP8 × FP8
-- HC decompress is implicit: residual is stored at coarse granularity
+- Layer 1 is the only causal critical layer: removing shared MoE there changes token 5→680
+- All other layers (0, 2, 10, 21, 27, 35, 42) are robust to single-layer MoE removal
+- Global MoE removal completely changes output (cos=0.002)

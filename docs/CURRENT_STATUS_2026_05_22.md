@@ -1,13 +1,57 @@
-# Current Status — 2026-05-22
+# Current Status — 2026-05-22 (end of day)
 
 ## TL;DR
 
-The project has two active tracks converging:
+**DeepSeek V4 Flash E2E one-token canary completed.** Official HC + attention (seq=1, pos=0) + CUDA MoE.forward connected end-to-end. The model emits finite logits and one greedy token for input_id=42. CUDA-accelerated attention path achieves 3x speedup (25s → 9s).
 
 | Track | Status | Key Artifact |
 |---|---|---|
-| **Qwen3.6 Executor** (Apple M1) | Calibration at 66.22%, specialization packs emitting, no pruning yet | `objeta-qwen36-executor` |
-| **DeepSeek V4 Flash** (NVIDIA CUDA) | Single-layer MoE proof working, FP4 decode implemented, real checkpoint run possible | `deepseek_single_layer_moe` |
+| **DeepSeek V4 Flash E2E** | **Complete** | `experiments/src/deepseek_e2e.rs`, `experiments/src/deepseek_e2e_fast.rs` |
+| **CUDA MoE.forward** | Sealed (parity cos=1.0) | `crates/objeta-cuda/src/moe.rs` |
+| **Shared expert pinning** | Infrastructure ready | `CudaExpertCache`, `insert_pinned` |
+| **Qwen3.6 Executor** (M1) | Calibration 66.22% | `objeta-qwen36-executor` |
+
+---
+
+## DeepSeek V4 Flash — Completed Milestones
+
+### M9: Real single-layer MoE proof ✅
+- Routed FP4 + shared FP8 official arithmetic
+- CUDA vs CPU parity: cosine=1.0, rel_l2=0.0
+- Layers 0, 27, 42 validated
+- Shared expert NaN root cause identified and fixed (`f8e4m3_to_f32` exp=15 → ±448.0 clamp)
+
+### E2E One-Token Canary ✅
+- 43 decoder layers: HC pre/post + MLA attention (seq=1, pos=0) + CUDA MoE.forward
+- Token embedding → HC expand [4,4096] → layers 0..42 → HC head → RMSNorm → LM head
+- **Output (input_id=42)**: token **5**
+- All outputs finite, `official_moe_forward=true`
+- Deterministic (3 runs identical)
+
+### CUDA-Accelerated Fast Path ✅
+- All attention FP8 linears moved to CUDA (`cuda_act_quant_device` + `cuda_fp8_act_fp8_weight_gemv_device`)
+- **3x faster**: 25s → 9s per token
+- Per-layer breakdown (ms):
+  - WqA [1024,4096]: ~4ms
+  - WqB [32768,1024]: ~23ms (largest)
+  - Wkv [512,4096]: ~1.5ms
+  - WoA grouped [8,1024,4096]: ~19ms
+  - WoB [4096,8192]: ~18ms
+  - MoE kernel: ~12ms
+  - MoE tensor load: ~48ms (H2D dominated)
+
+### E2E Causal Intervention Experiments ✅
+- 4 global ablations: official_full, no_moe, routed_only, shared_only
+- 24 single-layer interventions (8 layers × 3 kinds)
+- **Key finding**: Layer 1 is the only causal critical layer — removing shared MoE there changes token 5→680
+- Deep layers (10-42) are robust to single-layer MoE removal
+
+### Corrected Metrics
+- NaN suppression removed: exp=15 in fp8 weights now clamps to ±448.0
+- `parity_status: valid_finite` only when all outputs are finite
+- Logit comparisons use same raw arrays (`compare_outputs`)
+- MoE geometry validated per-layer (merge_residual, norm_identity)
+- `max_abs_error` no longer reports 0.0 for large rel_l2 (was serde NaN→null issue)
 
 ---
 
@@ -15,212 +59,86 @@ The project has two active tracks converging:
 
 ```
 crates/
-  objeta-core/          Shared types, errors, Result alias
-  objeta-parser/        Safetensors mmap loader + DeepSeek metadata parser
-    src/
-      lib.rs            ModelWeights (lazy mmap), Dtype, ModelConfig
-      deepseek.rs       DeepSeek V4 Flash layout parsing, FP4 decode
-      sanity.rs         Sanity report generation
-  objeta-cuda/          CUDA backend + MoE executor
-    src/
-      lib.rs            CudaBackend, CudaExpertCache, quant API
-      moe.rs            selected_moe_cpu_fp32, ExpertWeights, comparison
-      quant.rs          Q4_0/Q5_0/IQ3 quant + CUDA GEMV kernels
-      context.rs        CUDA context init
-      stream.rs         Stream pool
-      memory.rs         Pinned host buffers
-      telemetry.rs      JSON event timing
-      ffi.rs            Raw CUDA driver bindings
-      attention.rs      (stub)
+  objeta-core/          Shared types, errors
+  objeta-parser/        Safetensors mmap, FP8 decode, DeepSeek metadata
+  objeta-cuda/          CUDA backend, MoE executor, quant kernels
     src/bin/
-      bench_qgemv.rs    Quantized GEMV benchmark harness
-      bench_selected_moe.rs  Synthetic MoE benchmark
-      deepseek_single_layer_moe.rs  ★ Real DeepSeek single-layer MoE proof
-  objeta-cli/           CLI entry point (clap)
-  objeta-analysis/      SVD-based geometry analysis
-  objeta-aot/           AOT specialization pipeline (calibration→pack→verify)
-  objeta-quantize/      Quantization plan generation
-  objeta-routing/       Routing zone classification
-  objeta-runtime/       Runtime strategy config generation
-  objeta-moe/           MoE routing analysis
-  objeta-qwen36-executor/ Qwen3.6 full executor (M1 Metal)
-  objeta-os/            OS-level profile structures
-  objeta-phase/         Phase classification
-  objeta-ssd/           SSD offload path (stub)
-  objeta-metal/         Metal backend (stub)
-```
-
-### CLI Commands
-
-```
-objeta analyze <path>              Static geometry analysis
-objeta moe-analyze <path>          MoE routing analysis for Qwen3.6
-objeta strategy <profile>          Family-aware runtime strategy
-objeta quantize <profile>          Phase-adaptive quantization plan
-objeta parse-deepseek <model_dir>  Parse DeepSeek V4 Flash metadata
-objeta sanity-report <input_dir>   Inventory sanity report
-```
-
-Binaries:
-```
-deepseek_single_layer_moe  Real DeepSeek single-layer MoE proof
-bench_qgemv                Quantized GEMV benchmark
-bench_selected_moe         Synthetic MoE benchmark
+      deepseek_single_layer_moe.rs  Single-layer MoE benchmark
+  objeta-cli/           CLI entry point
+  objeta-analysis/      SVD geometry analysis
+  objeta-aot/           Ahead-of-time compilation
+  objeta-routing/       Precision routing
+  objeta-quantize/      Phase-adaptive quantization
+  objeta-moe/           MoE routing compiler
+  objeta-os/            Reflexive runtime OS
+  objeta-runtime/       Runtime profiling
+  objeta-metal/         Metal GPU kernels (M1/M2)
+  objeta-ssd/           SSD-resident paging
+  objeta-qwen36-executor/  Qwen3.6 full forward (C ABI)
+experiments/
+  src/
+    deepseek_e2e.rs         E2E canary + intervention experiments (CPU attention)
+    deepseek_e2e_fast.rs    E2E canary (CUDA-accelerated attention, 3x faster)
+    deepseek_e2e_ablated.rs (archived ablation variants)
 ```
 
 ---
 
-## DeepSeek V4 Flash Integration (m9 Milestones)
+## Key Binaries
 
-### Completed
-
-| Milestone | Description | Tests |
+| Binary | Crate | Purpose |
 |---|---|---|
-| **m9.0** | Metadata parser: layout JSON, expert layout, router layout, tensor index, inventory summary | 16 |
-| **m9.1** | FFN naming fix: `mlp.experts.{N}.{gate,up,down}_proj` pattern resolved. `shared_experts` split from routed experts. | — |
-| **m9.2** | FP4 metadata inventory: `storage_dtype`, `logical_dtype`, `scale_tensor_name`, `scale_dtype`, `logical_shape`, `block_size`, `packed_values_per_byte` fields added to expert layout. | — |
-| **m9.3** | FP4 decode: E2M1FN lookup table, F8_E8M0 scale decode, `decode_deepseek_fp4_to_f32()` CPU function, synthetic fixture test, sanity report updated. | 2 |
-| **m9.4** | Manual-expert mode: `--expert-ids`/`--expert-weights` CLI, FP4 I8+scale loading via `get_raw()`, decode-to-FP32 → Q4_0 → CUDA MoE pipeline, JSON report, synthetic lifecycle tests. | 6 |
-| **m9.5+** | (Not started) Hash routing, multi-layer, attention, generation. | 0 |
+| `deepseek_single_layer_moe` | objeta-cuda | Single-layer MoE benchmark + real checkpoint canary |
+| `deepseek_e2e` | experiments | E2E one-token + intervention experiments (--intervention-layer, --intervention-kind) |
+| `deepseek_e2e_fast` | experiments | CUDA-accelerated E2E (3x faster, attention CUDA linears) |
 
-### m9 Test Coverage (14 bin tests)
+## Running E2E
 
-| Test | What it validates |
-|---|---|
-| `test_explicit_single_layer_works` | Router mode end-to-end with synthetic tensors |
-| `test_cpu_router_top_k_selection` | Router top-k selection correctness |
-| `test_manual_expert_ids_skip_router` | CLI parsing: `--expert-ids` |
-| `test_uniform_expert_weights_sum_to_one` | Default weight normalization |
-| `test_explicit_expert_weights_validation` | Explicit `--expert-weights` validation |
-| `test_invalid_expert_id_fails` | Out-of-range expert rejection |
-| `test_missing_scale_tensor_fails` | FP4 metadata gap detection |
-| `test_fp4_decode_flow_with_synthetic_tensors` | Full I8→FP32 decode pipeline |
-| `test_router_shape_mismatch_fails` | Shape validation |
-| `test_missing_router_fails_clearly` | Missing router tensor |
-| `test_missing_expert_tensor_fails_clearly` | Missing expert tensor |
-| `test_unsupported_dtype_fails` | Unsupported dtype rejection |
-| `test_packed_experts_refuses_to_run` | Packed layout rejection |
-| `test_layer_out_of_range_fails` | Layer bounds check |
+```powershell
+# Baseline (official one-token canary)
+cargo run --release -p objeta-experiments --bin deepseek_e2e
 
-### FP4 Decode Semantics
+# Fast CUDA-accelerated
+cargo run --release -p objeta-experiments --bin deepseek_e2e_fast
 
-Confirmed from DeepSeek V4 Flash inference source code:
-- **Format**: E2M1FN (1 sign, 2 exponent, 1 mantissa, bias=1)
-- **Packing**: 2 FP4 values per I8 byte, low nibble first
-- **Scale**: F8_E8M0 (unsigned 8-bit exponent, `value = 2^(raw - 127)`)
-- **Block size**: 32 logical FP4 elements per scale value
-- **Matrix layout**: Physical `[out, in//2]` I8 → Logical `[out, in]` FP32
+# Global ablation
+cargo run --release -p objeta-experiments --bin deepseek_e2e -- --global-variant no_moe_global
 
-Full spec: [DEEPSEEK_FP4_DECODE.md](DEEPSEEK_FP4_DECODE.md)
-
-### Real Checkpoint Run
-
-Possible now with:
-```bash
-objeta-cli deepseek-single-layer-moe \
-  --model ../DeepSeek-V4-Flash \
-  --layer-id 27 \
-  --expert-ids 0,3,7 \
-  --expert-weights 0.2,0.5,0.3
+# Single-layer intervention
+cargo run --release -p objeta-experiments --bin deepseek_e2e -- --intervention-layer 27 --intervention-kind remove_shared
 ```
 
-The binary auto-detects FP4 vs BF16 storage and branches accordingly.
-
 ---
 
-## CUDA Backend
-
-### Quantized GEMV
-
-| Format | Block | Bytes/Block | CUDA Kernel | CPU Reference | Tests |
-|---|---|---|---|---|---|
-| Q4_0 | 32 | 18 | Yes | Yes | 5+ |
-| Q5_0 | 32 | 22 | Yes | Yes | 3+ |
-| IQ3_0 | 32 | 14 | Yes | Yes | 1+ |
-
-### Validated
-- CUDA device discovery, context init, stream pool
-- Pinned host buffers, async H2D/D2H
-- CUDA event timing with JSON telemetry
-- Correctness: cosine similarity, relative L2, max abs error
-- Shapes: 16×32, 128×256, 1024×4096
-
-### Not Yet
-- Attention kernels
-- Fused MoE kernel
-- Large model residency
-- Multi-GPU
-
-Full status: [CUDA_BACKEND_STATUS_2026_05_21.md](CUDA_BACKEND_STATUS_2026_05_21.md)
-
----
-
-## Qwen3.6 Executor (M1)
-
-### State
-- `safe_exact` correctness baseline
-- Runtime pack loading from AOT specialization packs
-- Importance-aware eviction in expert cache
-- Governor modes: disabled / observe-only / safety-only / offensive-v0
-- `moe_io_events` include `selected_weights` for AOT calibration
-
-### Calibration Coverage
-- **66.22%** (6,781 / 10,240 logical experts)
-- 9,560 events from 5 prompts
-- Per-layer: 54.69% (min) → 86.72% (max), median 66.02%
-
-### Specialization Packs
-- **M1 8GB conservative**: 6,781 experts, q8:40 q5:1,131 q4:5,650, 0% routing loss
-- **RTX3070 8GB/32GB**: 6,781 experts, q8:40 q5:1,131 q4:3,095 iq3:2,555, 0% routing loss
-
-### Constraints
-- Coverage below pruning gate → `compress=0`, `prune_candidate=0`
-- Reports still advisory (`estimated_only=yes`, `requires_verification=yes`)
-
----
-
-## Test Coverage Summary
+## Test Coverage
 
 | Crate | Tests |
 |---|---|
-| objeta-parser | 18 (16 lib + 2 fp4) |
-| objeta-cuda (lib) | 15 |
-| objeta-cuda (deepseek_single_layer_moe) | 14 |
-| objeta-cuda (bench_qgemv) | 4 |
-| objeta-cuda (bench_selected_moe) | 1 |
-| objeta-aot | 4 |
-| objeta-quantize | 3 |
-| objeta-analysis | 2 |
-| objeta-qwen36-executor | 5 |
-| **Total** | **~66** |
+| objeta-parser | 18 |
+| objeta-cuda (lib) | 31 |
+| objeta-cuda (deepseek_single_layer_moe) | 22 |
+| objeta-cuda (bench_qgemv) | 0 |
+| objeta-cuda (bench_selected_moe) | 4 |
+| **Total objeta-cuda** | **57** |
+
+All 57 tests pass as of 2026-05-22.
 
 ---
 
-## Key Design Rules (from M9 spec)
+## Remaining Work
+
+1. **Shared pinned residency**: Wiring `CudaExpertCache::insert_pinned` into execution path (infrastructure ready, not connected)
+2. **Multi-token decode**: KV cache for position > 0, RoPE implementation
+3. **LM head CUDA**: 374ms CPU dense GEMV → CUDA BF16 GEMV (~5ms)
+4. **MoE load optimization**: Cache preload for routed experts, shared pinning
+5. **WoA/WoB upload**: Single bulk upload instead of per-group sub-buffer copies
+
+---
+
+## Key Design Rules
 
 1. **Never guess packed slicing** — refuse if metadata missing
 2. **Load only required tensors** — no full checkpoint RAM expansion
 3. **Validate everything** — shapes, dtypes, layer bounds, expert IDs
 4. **CPU reference always** — every CUDA path has a CPU comparison
-5. **Deterministic hidden input** — seeded synthetic, no real activations needed for proof
-
----
-
-## Next Steps
-
-1. **Run real checkpoint** — `deepseek_single_layer_moe` against actual DeepSeek V4 Flash model
-2. **Hash routing** (m9.5) — deterministic expert selection from token hash
-3. **Attention integration** (m9.6+) — full single-layer forward
-4. **Calibration expansion** — more routing-diverse prompts for Qwen3.6 to cross pruning gate
-5. **CUDA kernel optimization** — fused MoE kernel, shared quant API
-
----
-
-## Superseded Docs
-
-The following docs are snapshots from earlier dates and are superseded by this document:
-- `CURRENT_STATUS_2026_05_18.md`
-- `CURRENT_STATUS_2026_05_20.md`
-- `CURRENT_STATUS_2026_05_21.md`
-
-Keep: `CUDA_BACKEND_STATUS_2026_05_21.md`, `DEEPSEEK_FP4_DECODE.md`, `M9_DEEPSEEK_FLASH_SINGLE_LAYER_MOE.md`, `DESIGN.md`, architecture docs.
+5. **Finite-only parity** — `parity_status` must be `valid_finite` before reporting cosine

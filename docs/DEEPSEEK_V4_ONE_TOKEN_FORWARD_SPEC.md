@@ -1,5 +1,7 @@
 # DeepSeek V4 Flash — One-Token Forward Specification
 
+**Status: VERIFIED (2026-05-22)** — All operators below implemented and produce finite output for seq=1, pos=0.
+
 ## Architecture Overview
 
 - hidden_size = 4096

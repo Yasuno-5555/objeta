@@ -30,7 +30,14 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .map(|i| args.get(i+1).cloned().unwrap_or_else(|| r"E:\Projects\DeepSeek-V4-Flash".into()))
         .unwrap_or_else(|| r"E:\Projects\DeepSeek-V4-Flash".into());
 
-    let model = ModelWeights::open(&model_dir)?;
+        let intervention_layer: Option<usize> = args.iter().position(|a| a == "--intervention-layer")
+        .and_then(|i| args.get(i+1)).and_then(|v| v.parse().ok());
+        let global_variant: Option<String> = args.iter().position(|a| a == "--global-variant")
+        .and_then(|i| args.get(i+1)).map(|s| s.clone());
+let intervention_kind: Option<String> = args.iter().position(|a| a == "--intervention-kind")
+        .and_then(|i| args.get(i+1)).map(|s| s.clone());
+
+let model = ModelWeights::open(&model_dir)?;
 
     let dim = 4096; let hc = 4; let nl = 43; let nh = 64; let hd = 512;
     let qlr = 1024; let kvr = 512; let og = 8; let olr = 1024;
@@ -204,13 +211,67 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         };
         total_load_ms += load_moe.elapsed().as_secs_f32() * 1000.0;
 
-        // Execute official CUDA MoE.forward
-        let (moe_out, _tel) = execute_selected_moe_official_routed_fp4_cuda(
-            &quant, &moe_exec, &stream,
-            &expert_fp4_set, &selected_pairs,
-            &xfn, dim, intermed, dim, layer,
-            Some(&mut cache), Some(&sh_dev),
-        )?;
+        // Execute official CUDA MoE.forward (or intervention variant)
+        let do_global = global_variant.is_some();
+        let do_intervention = if do_global { false } else { intervention_layer.map_or(false, |l| l == layer) };
+        let moe_out = if do_intervention {
+            match intervention_kind.as_deref() {
+                Some("remove_routed") => {
+                    let empty: Vec<(usize, f32)> = vec![];
+                    let (out, _) = execute_selected_moe_official_routed_fp4_cuda(
+                        &quant, &moe_exec, &stream, &expert_fp4_set, &empty,
+                        &xfn, dim, intermed, dim, layer, Some(&mut cache), Some(&sh_dev))?;
+                    out
+                },
+                Some("remove_shared") => {
+                    let (out, _) = execute_selected_moe_official_routed_fp4_cuda(
+                        &quant, &moe_exec, &stream, &expert_fp4_set, &selected_pairs,
+                        &xfn, dim, intermed, dim, layer, Some(&mut cache), None)?;
+                    out
+                },
+                Some("remove_moe") => vec![0.0f32; dim],
+                _ => {
+                    let (out, _) = execute_selected_moe_official_routed_fp4_cuda(
+                        &quant, &moe_exec, &stream, &expert_fp4_set, &selected_pairs,
+                        &xfn, dim, intermed, dim, layer, Some(&mut cache), Some(&sh_dev))?;
+                    out
+                },
+            }
+        } else if do_global {
+            match global_variant.as_deref() {
+                Some("no_moe_global") => vec![0.0f32; dim],
+                Some("routed_only_global") => {
+                    let (out, _) = execute_selected_moe_official_routed_fp4_cuda(
+                        &quant, &moe_exec, &stream, &expert_fp4_set, &selected_pairs,
+                        &xfn, dim, intermed, dim, layer, Some(&mut cache), None)?;
+                    out
+                },
+                Some("shared_only_global") => {
+                    let empty: Vec<(usize, f32)> = vec![];
+                    let (out, _) = execute_selected_moe_official_routed_fp4_cuda(
+                        &quant, &moe_exec, &stream, &expert_fp4_set, &empty,
+                        &xfn, dim, intermed, dim, layer, Some(&mut cache), Some(&sh_dev))?;
+                    out
+                },
+                _ => {
+                    let (out, _) = execute_selected_moe_official_routed_fp4_cuda(
+                        &quant, &moe_exec, &stream,
+                        &expert_fp4_set, &selected_pairs,
+                        &xfn, dim, intermed, dim, layer,
+                        Some(&mut cache), Some(&sh_dev),
+                    )?;
+                    out
+                },
+            }
+        } else {
+            let (out, _) = execute_selected_moe_official_routed_fp4_cuda(
+                &quant, &moe_exec, &stream,
+                &expert_fp4_set, &selected_pairs,
+                &xfn, dim, intermed, dim, layer,
+                Some(&mut cache), Some(&sh_dev),
+            )?;
+            out
+        };
         let moe_finite = moe_out.iter().all(|v| v.is_finite());
         let moe_ms = moe_t0.elapsed().as_secs_f32() * 1000.0;
         total_moe_ms += moe_ms;
@@ -269,6 +330,9 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         total_moe_ms, total_head_ms: head_ms,
         flags: serde_json::json!({
             "official_moe_forward": true,
+            "intervention_layer": intervention_layer,
+            "global_variant": global_variant,
+            "intervention_kind": intervention_kind,
             "official_attention_seq1_pos0": true,
             "official_hyper_connection": true,
             "mtp_included": false,

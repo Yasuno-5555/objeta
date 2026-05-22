@@ -23,3 +23,50 @@ experiments/runs/
 # Keep checked-in oracle baselines
 !runs/oracles/
 !runs/oracles/**
+
+# E2E experiment outputs (generated JSON, stderr)
+*_out.json
+*_out.txt
+inter_*.json
+run1.json
+run2.json
+run3.json
+no_moe_global.json
+routed_only_global.json
+shared_only_global.json
+baseline_out.json
+fast_out.json
+stderr_out.txt
+
+# HuggingFace model cache
+hf_cache/
+
+# Binary model files
+models/
+*.bin
+
+# Phase profiles / benchmark artifacts
+phase_profile.json
+quantization_plan.json
+bench_results.json
+stability_map.json
+strategy.json
+attn_backbone_plan.json
+execution_plan*.json
+neuron_graph.json
+rollout_results.json
+
+# Diagnostic outputs
+diag_out.txt
+debug_norm.txt
+clippy_out.txt
+cargo_errors.log
+raw_output*.json
+parse_report.py
+
+# Calibration results
+calib/
+
+# IDE / tooling config
+.antigravitycli/
+.claude/
